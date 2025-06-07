@@ -37,7 +37,7 @@ This is a simple web application that allows users to upload and view CSV files 
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/whileseated/csv-viewer.git
+   git clone https://github.com/whileseated/node_csv_viewer.git
    cd csv-viewer
    ```
 
