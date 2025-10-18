@@ -2,7 +2,7 @@
 
 A minimal, functional web application for uploading and viewing CSV and TSV (tab-separated values) files with advanced features like sorting, URL detection, and drag-and-drop row reordering.
 
-![Screenshot of CSV Viewer](img/20251018_122104_xnap.png)
+![Screenshot of CSV Viewer](img/bibliography.png)
 
 ## Features
 

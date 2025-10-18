@@ -8,3 +8,4 @@ todo.md
 docs
 metadata.json
 saved_csvs/*
+!saved_csvs/.gitkeep
