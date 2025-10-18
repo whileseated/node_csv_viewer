@@ -4,3 +4,4 @@ node_modules/
 *.log
 .claude.md
 todo.md
+.csv
