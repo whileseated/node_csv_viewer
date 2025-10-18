@@ -1,0 +1,8 @@
+# Ignore all CSV files
+*.csv
+*.tsv
+*.txt
+
+# Keep metadata file
+!metadata.json
+!.gitignore
