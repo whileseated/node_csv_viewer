@@ -1,0 +1,9 @@
+{
+  "watch": ["server.js", "public/**/*"],
+  "ext": "js,html,css",
+  "ignore": ["node_modules/**", "uploads/**"],
+  "verbose": false,
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="styles.css">
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+<title>CSV/TSV Viewer</title>
+</head>
+<body>
+    <div class="options-container" id="optionsContainer" style="display: none;">
+        <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
+        <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
+        <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
+        <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Only Checked Rows</a>
+        <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export CSV</a>
+    </div>
+
+    <div class="bulk-actions-container" id="bulkActionsContainer" style="display: none;">
+        <a href="#" id="checkAllLink" onclick="checkAll()">Check All</a>
+        <a href="#" id="checkNoneLink" onclick="checkNone()">Check None</a>
+    </div>
+
+    <div class="container mt-3">
+        <div id="uploadSection" class="upload-section">
+            <div id="dropZone" class="drop-zone">
+                <div class="drop-zone-icon">⇪</div>
+                <div class="drop-zone-text">Drop CSV or TSV file here</div>
+                <div class="drop-zone-or">or</div>
+                <label for="csvFile" class="file-button">Choose File</label>
+                <input type="file" id="csvFile" class="file-input" accept=".csv,.tsv,.txt" />
+                <div class="drop-zone-hint">Supports .csv, .tsv, and .txt files</div>
+            </div>
+        </div>
+
+        <div id="loadingIndicator" class="loading-indicator" style="display: none;">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Processing file...</div>
+            <div class="loading-details" id="loadingDetails">Parsing rows...</div>
+        </div>
+
+        <div class="table-container" id="tableContainer" style="display: none;">
+            <table class="table table-striped" id="csvTable">
+                <thead class="table-header"></thead>
+                <tbody class="table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let currentData = [];
+        let currentHeaders = null;
+        let showRankColumn = false;
+        let showCheckboxColumn = false;
+        let showDragHandle = false;
+        let checkedRows = new Set();
+        let showCheckedRows = false;
+        let currentSort = { column: null, ascending: true }; // Define the current sorting state
+        let allData = []; // Store the complete dataset for toggling back
+        let hasSignificantAdjustments = false; // Track if export should be available
+        let lastCheckedIndex = null; // Track last checked checkbox for shift-click
+        let columnWidths = {}; // Store custom column widths
+        let isResizing = false;
+        let currentResizeColumn = null;
+        let startX = 0;
+        let startWidth = 0;
+
+        // File input event listener
+        document.getElementById('csvFile').addEventListener('change', uploadFile);
+
+        // Drag and drop event listeners
+        const dropZone = document.getElementById('dropZone');
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('drag-over');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const validExtensions = ['.csv', '.tsv', '.txt'];
+                const isValid = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+
+                if (isValid) {
+                    processFile(file);
+                } else {
+                    alert('Please drop a CSV, TSV, or TXT file');
+                }
+            }
+        });
+
+        async function uploadFile() {
+            const csvFile = document.getElementById('csvFile').files[0];
+            if (csvFile) {
+                processFile(csvFile);
+            }
+        }
+
+        function processFile(file) {
+            // Show loading indicator
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('loadingIndicator').style.display = 'block';
+
+            const fileSize = (file.size / 1024 / 1024).toFixed(1); // Size in MB
+            document.getElementById('loadingDetails').textContent = `Reading ${fileSize}MB file...`;
+
+            let rowCount = 0;
+            let lastUpdate = Date.now();
+            let allChunks = []; // Accumulate chunks here
+
+            Papa.parse(file, {
+                header: false,
+                dynamicTyping: true,
+                skipEmptyLines: true,
+                delimiter: "",
+                chunk: function(results, parser) {
+                    // Accumulate data from chunks
+                    if (results && results.data) {
+                        allChunks.push(...results.data);
+                        rowCount += results.data.length;
+                    }
+
+                    // Update UI every 200ms to avoid too many updates
+                    const now = Date.now();
+                    if (now - lastUpdate > 200) {
+                        const rowsFormatted = rowCount >= 1000
+                            ? `${(rowCount / 1000).toFixed(1)}K`
+                            : rowCount;
+                        document.getElementById('loadingDetails').textContent =
+                            `Parsed ${rowsFormatted} rows from ${fileSize}MB file...`;
+                        lastUpdate = now;
+                    }
+                },
+                complete: function (results) {
+                    // Log results for debugging
+                    console.log('Parse complete. Chunks collected:', allChunks.length);
+
+                    // Use accumulated chunks instead of results.data
+                    const data = allChunks;
+
+                    // Check if we have any data
+                    if (!data || data.length === 0) {
+                        console.error('No data was parsed from the file');
+                        document.getElementById('loadingIndicator').style.display = 'none';
+                        document.getElementById('uploadSection').style.display = 'block';
+                        alert("The file appears to be empty or could not be parsed.");
+                        return;
+                    }
+
+                    // Log any parsing errors but continue
+                    if (results && results.errors && results.errors.length > 0) {
+                        console.warn(`Parsing completed with ${results.errors.length} errors:`, results.errors);
+                    }
+
+                    const totalRows = data.length;
+                    const rowsFormatted = totalRows >= 1000
+                        ? `${(totalRows / 1000).toFixed(1)}K`
+                        : totalRows;
+
+                    document.getElementById('loadingDetails').textContent =
+                        `Processing ${rowsFormatted} rows...`;
+
+                    // Ensure there's data in the file
+                    if (data.length === 0) {
+                        document.getElementById('loadingIndicator').style.display = 'none';
+                        document.getElementById('uploadSection').style.display = 'block';
+                        alert("The file is empty.");
+                        return;
+                    }
+
+                    // Show the actual first row of the file in the alert for confirmation
+                    const firstRow = data[0];
+                    const rowValues = firstRow.join(', ');
+
+                    const confirmation = confirm(`Here is your first row of data:\n\n${rowValues}\n\nWould you like this row to become your header row?`);
+
+                    if (confirmation) {
+                        currentHeaders = firstRow;
+                        currentData = data.slice(1);
+                    } else {
+                        const numberOfColumns = firstRow.length;
+                        const newHeadersPrompt = `Please provide ${numberOfColumns} new headers separated by commas`;
+                        const newHeaders = prompt(newHeadersPrompt).split(',');
+                        currentHeaders = newHeaders.map(header => header.trim());
+                        currentData = data.slice();
+                    }
+
+                    const dataRowsFormatted = currentData.length >= 1000
+                        ? `${(currentData.length / 1000).toFixed(1)}K`
+                        : currentData.length;
+
+                    document.getElementById('loadingDetails').textContent =
+                        `Mapping ${dataRowsFormatted} rows to columns...`;
+
+                    // Use setTimeout to allow UI update before heavy processing
+                    setTimeout(() => {
+                        // Map the remaining rows to the headers, and add a unique ID
+                        currentData = currentData.map((row, index) => {
+                            const mappedRow = { ID: index + 1 };
+                            currentHeaders.forEach((header, i) => {
+                                mappedRow[header] = row[i] !== undefined ? row[i] : '';
+                            });
+                            return mappedRow;
+                        });
+
+                        allData = [...currentData];
+
+                        document.getElementById('loadingDetails').textContent =
+                            `Rendering ${dataRowsFormatted} rows...`;
+
+                        // Use setTimeout to allow UI to update before rendering
+                        setTimeout(() => {
+                            // Hide loading and show table
+                            document.getElementById('loadingIndicator').style.display = 'none';
+                            document.getElementById('tableContainer').style.display = 'block';
+                            document.getElementById('optionsContainer').style.display = 'flex';
+
+                            displayData(currentData);
+                        }, 50);
+                    }, 50);
+                },
+                error: function (error) {
+                    console.error('Parsing Error:', error);
+                    document.getElementById('loadingIndicator').style.display = 'none';
+                    document.getElementById('uploadSection').style.display = 'block';
+
+                    let errorMsg = "An error occurred while parsing the file.";
+                    if (error.message) {
+                        errorMsg += `\n\nError: ${error.message}`;
+                    }
+                    if (error.row !== undefined) {
+                        errorMsg += `\nRow: ${error.row}`;
+                    }
+                    errorMsg += "\n\nCheck the browser console for more details.";
+
+                    alert(errorMsg);
+                }
+            });
+        }
+
+        function displayData(data) {
+            if (!data || data.length === 0 || !currentHeaders) {
+                console.error("No data or headers to display");
+                return;
+            }
+
+            const tableHeader = document.querySelector('.table-header');
+            const tableBody = document.querySelector('.table-body');
+
+            // Create the header row with sorting functionality
+            let headerRow = '<tr>';
+            if (showDragHandle) headerRow += '<th style="width: 40px;">⠿</th>';
+            if (showRankColumn) headerRow += '<th>Rank</th>';
+            if (showCheckboxColumn) headerRow += '<th>Check</th>';
+            currentHeaders.forEach((header, index) => {
+                let sortClass = 'sortable';
+                if (currentSort.column === header) {
+                    sortClass += currentSort.ascending ? ' sorted-asc' : ' sorted-desc';
+                }
+                const width = columnWidths[header] ? `style="width: ${columnWidths[header]}px;"` : '';
+                headerRow += `<th class="${sortClass} resizable-header" ${width} data-column="${header}">
+                    <span onclick="sortData('${header}')">${header}</span>
+                    <div class="resize-handle" data-column="${header}"></div>
+                </th>`;
+            });
+            headerRow += '</tr>';
+            tableHeader.innerHTML = headerRow;
+
+            // Attach resize event listeners
+            attachResizeListeners();
+
+            // Create the data rows with drag-and-drop functionality
+            // Use array join instead of innerHTML concatenation for better performance
+            const rows = data.map((row, rowIndex) => {
+                let dataRow = `<tr ondragover="handleDragOver(event)" ondrop="handleDrop(event, ${rowIndex})">`;
+
+                if (showDragHandle) {
+                    dataRow += `<td class="drag-handle" draggable="true" ondragstart="handleDragStart(event, ${rowIndex})" style="cursor: grab; text-align: center;">⠿</td>`;
+                }
+                if (showRankColumn) dataRow += `<td>${rowIndex + 1}</td>`;
+                if (showCheckboxColumn) {
+                    const isChecked = checkedRows.has(row.ID) ? 'checked' : '';
+                    dataRow += `<td><input type="checkbox" ${isChecked} onclick="handleCheckboxChange(${row.ID}, ${rowIndex}, this, event)"></td>`;
+                }
+                currentHeaders.forEach(header => {
+                    const cellValue = row[header];
+                    const formattedValue = makeLinksClickable(cellValue);
+                    dataRow += `<td>${formattedValue}</td>`;
+                });
+                dataRow += '</tr>';
+                return dataRow;
+            });
+
+            tableBody.innerHTML = rows.join('');
+        }
+
+        function makeLinksClickable(text) {
+            if (text === null || text === undefined || text === '') return '';
+
+            const textStr = String(text);
+            // Quick check: if no http in the string, skip regex
+            if (!textStr.includes('http://') && !textStr.includes('https://')) {
+                return textStr;
+            }
+
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            return textStr.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+        }
+
+        function updateUIVisibility() {
+            // Show "Show Only Checked Rows" only when checkboxes are enabled
+            const showCheckedRowsLink = document.getElementById('showCheckedRowsLink');
+            if (showCheckboxColumn) {
+                showCheckedRowsLink.style.display = 'inline-block';
+            } else {
+                showCheckedRowsLink.style.display = 'none';
+            }
+
+            // Show bulk actions (Check All, Check None) only when checkboxes are enabled
+            const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+            if (showCheckboxColumn) {
+                bulkActionsContainer.style.display = 'flex';
+            } else {
+                bulkActionsContainer.style.display = 'none';
+            }
+
+            // Show export button only when significant adjustments have been made
+            const exportLink = document.getElementById('exportCSVLink');
+            if (hasSignificantAdjustments) {
+                exportLink.style.display = 'inline-block';
+            } else {
+                exportLink.style.display = 'none';
+            }
+        }
+
+        function markAsAdjusted() {
+            hasSignificantAdjustments = true;
+            updateUIVisibility();
+        }
+
+        function toggleRankColumn() {
+            showRankColumn = !showRankColumn;
+            document.getElementById('toggleRankColumnLink').classList.toggle('active', showRankColumn);
+            if (showRankColumn) {
+                markAsAdjusted();
+            }
+            displayData(currentData);
+        }
+
+        function toggleCheckmarkColumn() {
+            showCheckboxColumn = !showCheckboxColumn;
+            document.getElementById('toggleCheckmarkColumnLink').classList.toggle('active', showCheckboxColumn);
+            updateUIVisibility(); // Update visibility of "Show Only Checked Rows"
+            displayData(currentData);
+        }
+
+        function toggleDragHandle() {
+            showDragHandle = !showDragHandle;
+            document.getElementById('toggleDragHandleLink').classList.toggle('active', showDragHandle);
+            displayData(currentData);
+        }
+
+        function handleCheckboxChange(rowID, rowIndex, checkboxElem, event) {
+            // Handle shift-click range selection
+            if (event.shiftKey && lastCheckedIndex !== null && lastCheckedIndex !== rowIndex) {
+                const start = Math.min(lastCheckedIndex, rowIndex);
+                const end = Math.max(lastCheckedIndex, rowIndex);
+
+                // Determine if we're checking or unchecking based on current checkbox state
+                const shouldCheck = checkboxElem.checked;
+
+                // Check or uncheck all rows in the range
+                for (let i = start; i <= end; i++) {
+                    const currentRow = currentData[i];
+                    if (currentRow) {
+                        if (shouldCheck) {
+                            checkedRows.add(currentRow.ID);
+                        } else {
+                            checkedRows.delete(currentRow.ID);
+                        }
+                    }
+                }
+
+                // Refresh the display to show all checked boxes
+                displayData(currentData);
+            } else {
+                // Normal single checkbox toggle
+                if (checkboxElem.checked) {
+                    checkedRows.add(rowID);
+                } else {
+                    checkedRows.delete(rowID);
+                }
+            }
+
+            lastCheckedIndex = rowIndex;
+        }
+
+        function checkAll() {
+            currentData.forEach(row => {
+                checkedRows.add(row.ID);
+            });
+            displayData(currentData);
+        }
+
+        function checkNone() {
+            checkedRows.clear();
+            displayData(currentData);
+        }
+
+        // Column resizing functionality
+        function attachResizeListeners() {
+            const resizeHandles = document.querySelectorAll('.resize-handle');
+
+            resizeHandles.forEach(handle => {
+                handle.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    isResizing = true;
+                    currentResizeColumn = handle.getAttribute('data-column');
+                    startX = e.pageX;
+
+                    const th = handle.closest('th');
+                    startWidth = th.offsetWidth;
+
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                });
+            });
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+
+            const diff = e.pageX - startX;
+            const newWidth = Math.max(50, startWidth + diff); // Minimum width of 50px
+
+            columnWidths[currentResizeColumn] = newWidth;
+
+            // Update the column width immediately
+            const th = document.querySelector(`th[data-column="${currentResizeColumn}"]`);
+            if (th) {
+                th.style.width = newWidth + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                currentResizeColumn = null;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+
+        function toggleCheckedRows() {
+            if (!showCheckedRows) {
+                // Only display rows that are checked
+                const filteredData = allData.filter(row => checkedRows.has(row.ID));
+                displayData(filteredData);
+                document.getElementById('showCheckedRowsLink').textContent = "Show All Rows";
+                markAsAdjusted();
+            } else {
+                // Show all rows again
+                displayData(allData);
+                document.getElementById('showCheckedRowsLink').textContent = "Show Only Checked Rows";
+            }
+            showCheckedRows = !showCheckedRows;
+            document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
+        }
+
+        function parseCSV(file) {
+            return new Promise((resolve, reject) => {
+                Papa.parse(file, {
+                    complete: (result) => {
+                        console.log('Parsed Data:', result.data); // Debugging line
+                        resolve(result.data);
+                    },
+                    header: true,
+                    skipEmptyLines: true,
+                    dynamicTyping: true,
+                    error: (error) => {
+                        console.error('Parsing Error:', error); // Error handling
+                        reject(error);
+                    },
+                });
+            });
+        }
+
+        // Drag-and-drop row reordering functionality
+        function handleDragStart(event, index) {
+            draggedRowIndex = index;
+            event.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragOver(event) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+        }
+
+        function handleDrop(event, index) {
+            event.preventDefault();
+            if (draggedRowIndex !== null && draggedRowIndex !== index) {
+                const draggedRow = currentData.splice(draggedRowIndex, 1)[0];
+                currentData.splice(index, 0, draggedRow);
+                markAsAdjusted();
+                displayData(currentData);
+            }
+        }
+
+        // Sorting functionality
+        function sortData(column) {
+            // Toggle sorting order if the same column is clicked again
+            if (currentSort.column === column) {
+                currentSort.ascending = !currentSort.ascending;
+            } else {
+                currentSort.column = column;
+                currentSort.ascending = true;
+            }
+
+            // Sort function to be used for both arrays
+            const sortFunction = (a, b) => {
+                const valA = a[column];
+                const valB = b[column];
+
+                if (valA < valB) return currentSort.ascending ? -1 : 1;
+                if (valA > valB) return currentSort.ascending ? 1 : -1;
+                return 0;
+            };
+
+            // Sort both the current data and all data to maintain sort across filters
+            currentData.sort(sortFunction);
+            allData.sort(sortFunction);
+
+            markAsAdjusted();
+            displayData(currentData);
+        }
+
+        // Export CSV functionality
+        function exportCSV() {
+            if (!currentData || currentData.length === 0 || !currentHeaders) {
+                alert("No data to export");
+                return;
+            }
+
+            // Build CSV content
+            let csvContent = '';
+
+            // Add headers
+            let headers = [];
+            if (showRankColumn) {
+                headers.push('Rank');
+            }
+            headers = headers.concat(currentHeaders);
+            csvContent += headers.map(h => `"${h}"`).join(',') + '\n';
+
+            // Add data rows (use currentData which reflects current view/sort/filter)
+            const dataToExport = showCheckedRows
+                ? currentData
+                : currentData;
+
+            dataToExport.forEach((row, index) => {
+                let rowData = [];
+
+                // Add rank if enabled
+                if (showRankColumn) {
+                    rowData.push(index + 1);
+                }
+
+                // Add all other columns
+                currentHeaders.forEach(header => {
+                    const value = row[header];
+                    // Escape quotes and wrap in quotes if contains comma, quote, or newline
+                    const stringValue = value !== null && value !== undefined ? String(value) : '';
+                    const escapedValue = stringValue.replace(/"/g, '""');
+                    rowData.push(`"${escapedValue}"`);
+                });
+
+                csvContent += rowData.join(',') + '\n';
+            });
+
+            // Create download link
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+
+            // Generate filename with timestamp
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            const filename = `csv_export_${timestamp}.csv`;
+
+            link.setAttribute('href', url);
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
