@@ -10,6 +10,7 @@
 </head>
 <body>
     <div class="options-container" id="optionsContainer" style="display: none;">
+        <span id="rowCount" class="row-count-badge"></span>
         <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
         <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
         <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
@@ -257,6 +258,13 @@
                 console.error("No data or headers to display");
                 return;
             }
+
+            // Update row count display
+            const rowCountElement = document.getElementById('rowCount');
+            const formattedCount = data.length >= 1000
+                ? `${(data.length / 1000).toFixed(1)}K`
+                : data.length;
+            rowCountElement.textContent = `${formattedCount} rows`;
 
             const tableHeader = document.querySelector('.table-header');
             const tableBody = document.querySelector('.table-body');
