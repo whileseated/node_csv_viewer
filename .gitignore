@@ -2,10 +2,3 @@ node_modules/
 .DS_Store
 .env
 *.log
-.claude.md
-todo.md
-.csv
-docs
-metadata.json
-saved_csvs/*
-!saved_csvs/.gitkeep
