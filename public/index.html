@@ -11,10 +11,11 @@
 <body>
     <div class="options-container" id="optionsContainer" style="display: none;">
         <span id="rowCount" class="row-count-badge"></span>
+        <input type="text" id="filterInput" class="filter-input" placeholder="Filter rows..." oninput="filterRows()" />
         <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
         <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
         <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
-        <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Only Checked Rows</a>
+        <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Checks</a>
         <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export CSV</a>
     </div>
 
@@ -24,6 +25,14 @@
     </div>
 
     <div class="container mt-3">
+        <!-- Tab Navigation -->
+        <div class="tab-container">
+            <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
+            <button class="tab-button active" id="uploadTab" onclick="switchTab('upload')">Upload New</button>
+            <button class="tab-button" id="savedTab" onclick="switchTab('saved')">Saved Files</button>
+        </div>
+
+        <!-- Upload Section -->
         <div id="uploadSection" class="upload-section">
             <div id="dropZone" class="drop-zone">
                 <div class="drop-zone-icon">⇪</div>
@@ -32,6 +41,19 @@
                 <label for="csvFile" class="file-button">Choose File</label>
                 <input type="file" id="csvFile" class="file-input" accept=".csv,.tsv,.txt" />
                 <div class="drop-zone-hint">Supports .csv, .tsv, and .txt files</div>
+            </div>
+        </div>
+
+        <!-- Saved Files Section -->
+        <div id="savedFilesSection" class="saved-files-section" style="display: none;">
+            <div class="saved-files-container">
+                <div id="savedFilesContent">
+                    <div class="loading-indicator" id="savedFilesLoading" style="display: none;">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text">Loading saved files...</div>
+                    </div>
+                    <div id="savedFilesList"></div>
+                </div>
             </div>
         </div>
 
@@ -52,6 +74,8 @@
     <script>
         let currentData = [];
         let currentHeaders = null;
+        let rawFileData = []; // Store raw file data before headers are applied
+        let hasCustomHeaders = false; // Track if user has set custom headers
         let showRankColumn = false;
         let showCheckboxColumn = false;
         let showDragHandle = false;
@@ -59,6 +83,7 @@
         let showCheckedRows = false;
         let currentSort = { column: null, ascending: true }; // Define the current sorting state
         let allData = []; // Store the complete dataset for toggling back
+        let unfilteredData = []; // Store data before filter is applied
         let hasSignificantAdjustments = false; // Track if export should be available
         let lastCheckedIndex = null; // Track last checked checkbox for shift-click
         let columnWidths = {}; // Store custom column widths
@@ -66,6 +91,7 @@
         let currentResizeColumn = null;
         let startX = 0;
         let startWidth = 0;
+        let currentFilter = ''; // Track current filter text
 
         // File input event listener
         document.getElementById('csvFile').addEventListener('change', uploadFile);
@@ -112,6 +138,9 @@
         }
 
         function processFile(file) {
+            // Hide add header button while processing
+            document.getElementById('addHeaderBtn').style.display = 'none';
+
             // Show loading indicator
             document.getElementById('uploadSection').style.display = 'none';
             document.getElementById('loadingIndicator').style.display = 'block';
@@ -183,22 +212,14 @@
                         return;
                     }
 
-                    // Show the actual first row of the file in the alert for confirmation
+                    // Store raw data for later header manipulation
+                    rawFileData = data;
+                    hasCustomHeaders = false;
+
+                    // Always use first row as headers by default
                     const firstRow = data[0];
-                    const rowValues = firstRow.join(', ');
-
-                    const confirmation = confirm(`Here is your first row of data:\n\n${rowValues}\n\nWould you like this row to become your header row?`);
-
-                    if (confirmation) {
-                        currentHeaders = firstRow;
-                        currentData = data.slice(1);
-                    } else {
-                        const numberOfColumns = firstRow.length;
-                        const newHeadersPrompt = `Please provide ${numberOfColumns} new headers separated by commas`;
-                        const newHeaders = prompt(newHeadersPrompt).split(',');
-                        currentHeaders = newHeaders.map(header => header.trim());
-                        currentData = data.slice();
-                    }
+                    currentHeaders = firstRow;
+                    currentData = data.slice(1);
 
                     const dataRowsFormatted = currentData.length >= 1000
                         ? `${(currentData.length / 1000).toFixed(1)}K`
@@ -209,6 +230,12 @@
 
                     // Use setTimeout to allow UI update before heavy processing
                     setTimeout(() => {
+                        // Check if there's a "Checked" or "Rank" column in the headers
+                        const checkedColumnIndex = currentHeaders.indexOf('Checked');
+                        const rankColumnIndex = currentHeaders.indexOf('Rank');
+                        const hasCheckedColumn = checkedColumnIndex !== -1;
+                        const hasRankColumn = rankColumnIndex !== -1;
+
                         // Map the remaining rows to the headers, and add a unique ID
                         currentData = currentData.map((row, index) => {
                             const mappedRow = { ID: index + 1 };
@@ -217,6 +244,46 @@
                             });
                             return mappedRow;
                         });
+
+                        // If there's a "Checked" column, restore checkbox states
+                        if (hasCheckedColumn) {
+                            checkedRows.clear();
+                            currentData.forEach(row => {
+                                const checkedValue = String(row['Checked']).toUpperCase();
+                                if (checkedValue === 'TRUE' || checkedValue === '1' || checkedValue === 'YES') {
+                                    checkedRows.add(row.ID);
+                                }
+                            });
+
+                            // Remove "Checked" from headers (it's UI state, not data)
+                            currentHeaders = currentHeaders.filter(h => h !== 'Checked');
+
+                            // Remove "Checked" column from data
+                            currentData = currentData.map(row => {
+                                const newRow = { ...row };
+                                delete newRow['Checked'];
+                                return newRow;
+                            });
+
+                            // Enable checkbox column
+                            showCheckboxColumn = true;
+                        }
+
+                        // If there's a "Rank" column, remove it and enable rank column
+                        if (hasRankColumn) {
+                            // Remove "Rank" from headers (it's UI state, not data)
+                            currentHeaders = currentHeaders.filter(h => h !== 'Rank');
+
+                            // Remove "Rank" column from data
+                            currentData = currentData.map(row => {
+                                const newRow = { ...row };
+                                delete newRow['Rank'];
+                                return newRow;
+                            });
+
+                            // Enable rank column
+                            showRankColumn = true;
+                        }
 
                         allData = [...currentData];
 
@@ -230,7 +297,26 @@
                             document.getElementById('tableContainer').style.display = 'block';
                             document.getElementById('optionsContainer').style.display = 'flex';
 
+                            // Show add header button if using default headers
+                            if (!hasCustomHeaders) {
+                                document.getElementById('addHeaderBtn').style.display = 'block';
+                            }
+
+                            // Clear filter input and state
+                            document.getElementById('filterInput').value = '';
+                            currentFilter = '';
+                            unfilteredData = [];
+
+                            // Update button states if they were automatically enabled
+                            if (showCheckboxColumn) {
+                                document.getElementById('toggleCheckmarkColumnLink').classList.add('active');
+                            }
+                            if (showRankColumn) {
+                                document.getElementById('toggleRankColumnLink').classList.add('active');
+                            }
+
                             displayData(currentData);
+                            updateUIVisibility(); // Ensure UI state is correct
                         }, 50);
                     }, 50);
                 },
@@ -365,6 +451,9 @@
             document.getElementById('toggleRankColumnLink').classList.toggle('active', showRankColumn);
             if (showRankColumn) {
                 markAsAdjusted();
+            } else {
+                // Still update visibility when toggling off
+                updateUIVisibility();
             }
             displayData(currentData);
         }
@@ -480,15 +569,56 @@
                 // Only display rows that are checked
                 const filteredData = allData.filter(row => checkedRows.has(row.ID));
                 displayData(filteredData);
-                document.getElementById('showCheckedRowsLink').textContent = "Show All Rows";
+                document.getElementById('showCheckedRowsLink').textContent = "Show All";
                 markAsAdjusted();
             } else {
                 // Show all rows again
                 displayData(allData);
-                document.getElementById('showCheckedRowsLink').textContent = "Show Only Checked Rows";
+                document.getElementById('showCheckedRowsLink').textContent = "Show Checks";
             }
             showCheckedRows = !showCheckedRows;
             document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
+        }
+
+        // Filter rows based on search term
+        function filterRows() {
+            const filterInput = document.getElementById('filterInput');
+            const filterText = filterInput.value.toLowerCase().trim();
+
+            // If filter is empty, restore unfiltered data
+            if (filterText === '') {
+                if (currentFilter !== '') {
+                    // Was filtering before, now clearing
+                    currentData = unfilteredData.length > 0 ? [...unfilteredData] : [...currentData];
+                    currentFilter = '';
+                    displayData(currentData);
+                }
+                return;
+            }
+
+            // Store unfiltered data if this is the first filter
+            if (currentFilter === '') {
+                unfilteredData = [...currentData];
+            }
+
+            // Filter data - search across all columns
+            const filtered = unfilteredData.filter(row => {
+                // Check each column value
+                return currentHeaders.some(header => {
+                    const value = row[header];
+                    if (value === null || value === undefined) return false;
+                    return String(value).toLowerCase().includes(filterText);
+                });
+            });
+
+            currentFilter = filterText;
+            currentData = filtered;
+            displayData(currentData);
+
+            // Mark as adjusted if filter is active
+            if (filterText !== '') {
+                markAsAdjusted();
+            }
         }
 
         function parseCSV(file) {
@@ -565,6 +695,11 @@
                 return;
             }
 
+            // Show export dialog
+            showExportDialog();
+        }
+
+        function generateCSVContent() {
             // Build CSV content
             let csvContent = '';
 
@@ -572,6 +707,9 @@
             let headers = [];
             if (showRankColumn) {
                 headers.push('Rank');
+            }
+            if (showCheckboxColumn) {
+                headers.push('Checked');
             }
             headers = headers.concat(currentHeaders);
             csvContent += headers.map(h => `"${h}"`).join(',') + '\n';
@@ -589,6 +727,11 @@
                     rowData.push(index + 1);
                 }
 
+                // Add checked state if checkboxes enabled
+                if (showCheckboxColumn) {
+                    rowData.push(checkedRows.has(row.ID) ? 'TRUE' : 'FALSE');
+                }
+
                 // Add all other columns
                 currentHeaders.forEach(header => {
                     const value = row[header];
@@ -600,6 +743,12 @@
 
                 csvContent += rowData.join(',') + '\n';
             });
+
+            return csvContent;
+        }
+
+        function downloadCSV() {
+            const csvContent = generateCSVContent();
 
             // Create download link
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -616,6 +765,458 @@
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+        }
+
+        // Tab switching functionality
+        function switchTab(tab) {
+            if (tab === 'upload') {
+                document.getElementById('uploadTab').classList.add('active');
+                document.getElementById('savedTab').classList.remove('active');
+                document.getElementById('uploadSection').style.display = 'block';
+                document.getElementById('savedFilesSection').style.display = 'none';
+                // Show add header button if using default headers
+                if (!hasCustomHeaders && currentData.length > 0) {
+                    document.getElementById('addHeaderBtn').style.display = 'block';
+                }
+            } else if (tab === 'saved') {
+                // Check if saved tab is already active - if so, just collapse the list
+                const savedTabActive = document.getElementById('savedTab').classList.contains('active');
+                const savedFilesVisible = document.getElementById('savedFilesSection').style.display === 'block';
+
+                if (savedTabActive && savedFilesVisible) {
+                    // Just collapse the saved files list, keep button active
+                    document.getElementById('savedFilesSection').style.display = 'none';
+                } else {
+                    // Show saved files
+                    document.getElementById('uploadTab').classList.remove('active');
+                    document.getElementById('savedTab').classList.add('active');
+                    document.getElementById('uploadSection').style.display = 'none';
+                    document.getElementById('savedFilesSection').style.display = 'block';
+                    // Hide add header button when viewing saved files
+                    document.getElementById('addHeaderBtn').style.display = 'none';
+                    // Load saved files when switching to this tab
+                    loadSavedFiles();
+                }
+            }
+        }
+
+        // Saved files management
+        async function loadSavedFiles() {
+            const loadingIndicator = document.getElementById('savedFilesLoading');
+            const filesList = document.getElementById('savedFilesList');
+
+            loadingIndicator.style.display = 'block';
+            filesList.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/saved-files');
+                const data = await response.json();
+
+                loadingIndicator.style.display = 'none';
+
+                if (!data.success) {
+                    filesList.innerHTML = '<div class="empty-state">Error loading files</div>';
+                    return;
+                }
+
+                if (data.files.length === 0) {
+                    filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
+                    return;
+                }
+
+                // Build table
+                let tableHTML = `
+                    <table class="saved-files-table">
+                        <thead>
+                            <tr>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Last Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                data.files.forEach(file => {
+                    const size = formatFileSize(file.size);
+                    const date = formatDate(file.lastModified);
+                    tableHTML += `
+                        <tr>
+                            <td class="filename-cell">
+                                <span class="filename-display" id="filename-${file.filename}">${file.filename}</span>
+                                <input type="text" class="filename-input" id="input-${file.filename}"
+                                       value="${file.filename}" style="display: none;">
+                            </td>
+                            <td>${size}</td>
+                            <td>${date}</td>
+                            <td>
+                                <div class="file-actions">
+                                    <button class="file-action-btn" onclick="loadSavedFile('${file.filename}')">Load</button>
+                                    <button class="file-action-btn" onclick="startRename('${file.filename}')">Rename</button>
+                                    <button class="file-action-btn delete" onclick="deleteSavedFile('${file.filename}')">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                tableHTML += '</tbody></table>';
+                filesList.innerHTML = tableHTML;
+            } catch (error) {
+                console.error('Error loading saved files:', error);
+                loadingIndicator.style.display = 'none';
+                filesList.innerHTML = '<div class="empty-state">Error loading files</div>';
+            }
+        }
+
+        async function loadSavedFile(filename) {
+            try {
+                const response = await fetch(`/api/file/${encodeURIComponent(filename)}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load file');
+                }
+
+                const blob = await response.blob();
+                const file = new File([blob], filename, { type: 'text/csv' });
+
+                // Reset header state when loading a saved file
+                hasCustomHeaders = false;
+                rawFileData = [];
+
+                // Switch to upload tab and process the file
+                switchTab('upload');
+                processFile(file);
+            } catch (error) {
+                console.error('Error loading file:', error);
+                alert('Failed to load file: ' + error.message);
+            }
+        }
+
+        function startRename(filename) {
+            const displaySpan = document.getElementById(`filename-${filename}`);
+            const inputField = document.getElementById(`input-${filename}`);
+
+            displaySpan.style.display = 'none';
+            inputField.style.display = 'inline-block';
+            inputField.focus();
+            inputField.select();
+
+            // Handle Enter key
+            inputField.onkeydown = async (e) => {
+                if (e.key === 'Enter') {
+                    await finishRename(filename, inputField.value);
+                } else if (e.key === 'Escape') {
+                    cancelRename(filename);
+                }
+            };
+
+            // Handle blur (clicking outside)
+            inputField.onblur = async () => {
+                if (inputField.value !== filename) {
+                    await finishRename(filename, inputField.value);
+                } else {
+                    cancelRename(filename);
+                }
+            };
+        }
+
+        async function finishRename(oldFilename, newFilename) {
+            if (newFilename === oldFilename) {
+                cancelRename(oldFilename);
+                return;
+            }
+
+            if (!newFilename || newFilename.trim() === '') {
+                alert('Filename cannot be empty');
+                cancelRename(oldFilename);
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/rename/${encodeURIComponent(oldFilename)}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ newFilename: newFilename })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert('Failed to rename file: ' + data.error);
+                    cancelRename(oldFilename);
+                    return;
+                }
+
+                // Reload the files list
+                loadSavedFiles();
+            } catch (error) {
+                console.error('Error renaming file:', error);
+                alert('Failed to rename file: ' + error.message);
+                cancelRename(oldFilename);
+            }
+        }
+
+        function cancelRename(filename) {
+            const displaySpan = document.getElementById(`filename-${filename}`);
+            const inputField = document.getElementById(`input-${filename}`);
+
+            displaySpan.style.display = 'inline';
+            inputField.style.display = 'none';
+        }
+
+        async function deleteSavedFile(filename) {
+            if (!confirm(`Are you sure you want to delete "${filename}"? This cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/delete/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert('Failed to delete file: ' + data.error);
+                    return;
+                }
+
+                // Reload the files list
+                loadSavedFiles();
+            } catch (error) {
+                console.error('Error deleting file:', error);
+                alert('Failed to delete file: ' + error.message);
+            }
+        }
+
+        // Export dialog functionality
+        function showExportDialog() {
+            const overlay = document.createElement('div');
+            overlay.className = 'export-dialog-overlay';
+            overlay.id = 'exportOverlay';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'export-dialog';
+            dialog.innerHTML = `
+                <div style="margin-bottom: 10px; font-weight: bold;">Export CSV</div>
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="exportType" value="download" checked style="margin-right: 5px;">
+                        Download to computer
+                    </label>
+                    <label style="display: block; cursor: pointer;">
+                        <input type="radio" name="exportType" value="save" style="margin-right: 5px;">
+                        Save to server
+                    </label>
+                </div>
+                <div class="export-dialog-buttons">
+                    <button class="file-action-btn" onclick="closeExportDialog()">Cancel</button>
+                    <button class="file-action-btn" onclick="handleExport()" style="background: #e8eaf6; font-weight: bold;">Export</button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+
+            overlay.onclick = closeExportDialog;
+        }
+
+        function closeExportDialog() {
+            const overlay = document.getElementById('exportOverlay');
+            const dialogs = document.querySelectorAll('.export-dialog');
+
+            if (overlay) overlay.remove();
+            dialogs.forEach(d => d.remove());
+        }
+
+        async function handleExport() {
+            const exportType = document.querySelector('input[name="exportType"]:checked').value;
+
+            closeExportDialog();
+
+            if (exportType === 'download') {
+                downloadCSV();
+            } else if (exportType === 'save') {
+                await saveToServer();
+            }
+        }
+
+        async function saveToServer() {
+            const filename = prompt('Enter a filename for the saved CSV:', `csv_export_${new Date().toISOString().slice(0, 10)}.csv`);
+
+            if (!filename) {
+                return; // User cancelled
+            }
+
+            const csvContent = generateCSVContent();
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const file = new File([blob], filename, { type: 'text/csv' });
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert('Failed to save file: ' + data.error);
+                    return;
+                }
+
+                alert('File saved successfully!');
+
+                // If user is on saved files tab, reload the list
+                if (document.getElementById('savedTab').classList.contains('active')) {
+                    loadSavedFiles();
+                }
+            } catch (error) {
+                console.error('Error saving file:', error);
+                alert('Failed to save file: ' + error.message);
+            }
+        }
+
+        // Helper functions
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diff = now - date;
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+            if (days === 0) {
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                if (hours === 0) {
+                    const minutes = Math.floor(diff / (1000 * 60));
+                    return minutes === 0 ? 'Just now' : `${minutes}m ago`;
+                }
+                return `${hours}h ago`;
+            } else if (days === 1) {
+                return 'Yesterday';
+            } else if (days < 7) {
+                return `${days}d ago`;
+            } else {
+                return date.toLocaleDateString();
+            }
+        }
+
+        // Add header functionality
+        function showAddHeaderDialog() {
+            const overlay = document.createElement('div');
+            overlay.className = 'export-dialog-overlay';
+            overlay.id = 'headerDialogOverlay';
+
+            const firstRow = rawFileData[0];
+            const secondRow = rawFileData.length > 1 ? rawFileData[1] : null;
+            const firstRowValues = firstRow.join(', ');
+            const secondRowValues = secondRow ? secondRow.join(', ') : '';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'export-dialog';
+            dialog.innerHTML = `
+                <div style="margin-bottom: 10px; font-weight: bold;">Change Headers</div>
+                <div style="margin-bottom: 10px; font-size: 11px; color: #666;">
+                    Current headers: ${firstRowValues.substring(0, 80)}${firstRowValues.length > 80 ? '...' : ''}
+                </div>
+                ${secondRow ? `<div style="margin-bottom: 10px; font-size: 11px; color: #666;">
+                    First data row: ${secondRowValues.substring(0, 80)}${secondRowValues.length > 80 ? '...' : ''}
+                </div>` : ''}
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="headerType" value="second-row" ${secondRow ? 'checked' : ''} ${!secondRow ? 'disabled' : ''} style="margin-right: 5px;">
+                        Use next row as headers (shift data up)
+                    </label>
+                    <label style="display: block; cursor: pointer;">
+                        <input type="radio" name="headerType" value="custom" ${!secondRow ? 'checked' : ''} style="margin-right: 5px;">
+                        Enter custom headers
+                    </label>
+                </div>
+                <div class="export-dialog-buttons">
+                    <button class="file-action-btn" onclick="closeHeaderDialog()">Cancel</button>
+                    <button class="file-action-btn" onclick="applyHeaders()" style="background: #e8eaf6; font-weight: bold;">Apply</button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+
+            overlay.onclick = closeHeaderDialog;
+        }
+
+        function closeHeaderDialog() {
+            const overlay = document.getElementById('headerDialogOverlay');
+            const dialogs = document.querySelectorAll('.export-dialog');
+
+            if (overlay) overlay.remove();
+            dialogs.forEach(d => {
+                // Only remove header dialogs, not export dialogs
+                if (d.textContent.includes('Add Header Row')) {
+                    d.remove();
+                }
+            });
+        }
+
+        function applyHeaders() {
+            const headerType = document.querySelector('input[name="headerType"]:checked').value;
+
+            closeHeaderDialog();
+
+            if (headerType === 'second-row') {
+                // Use second row as headers (shift data up one row)
+                currentHeaders = rawFileData[1];
+                currentData = rawFileData.slice(2);
+            } else if (headerType === 'custom') {
+                // Prompt for custom headers
+                const numberOfColumns = rawFileData[0].length;
+                const newHeadersPrompt = `Enter ${numberOfColumns} column headers separated by commas:`;
+                const newHeadersInput = prompt(newHeadersPrompt);
+
+                if (newHeadersInput) {
+                    const newHeaders = newHeadersInput.split(',').map(h => h.trim());
+                    if (newHeaders.length === numberOfColumns) {
+                        currentHeaders = newHeaders;
+                        // Keep first row as data when using custom headers
+                        currentData = rawFileData.slice(1);
+                    } else {
+                        alert(`Please provide exactly ${numberOfColumns} headers. You provided ${newHeaders.length}.`);
+                        return;
+                    }
+                } else {
+                    return; // User cancelled
+                }
+            }
+
+            // Remap data with new headers
+            currentData = currentData.map((row, index) => {
+                const mappedRow = { ID: index + 1 };
+                currentHeaders.forEach((header, i) => {
+                    mappedRow[header] = row[i] !== undefined ? row[i] : '';
+                });
+                return mappedRow;
+            });
+
+            allData = [...currentData];
+            hasCustomHeaders = true;
+
+            // Hide the add header button
+            document.getElementById('addHeaderBtn').style.display = 'none';
+
+            // Redisplay the data with new headers
+            displayData(currentData);
         }
     </script>
 </body>

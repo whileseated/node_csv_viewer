@@ -8,11 +8,20 @@
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["csv", "tsv", "viewer", "spreadsheet", "data", "table", "sorting", "express"],
-  "author": "",
+  "keywords": [
+    "csv",
+    "tsv",
+    "viewer",
+    "spreadsheet",
+    "data",
+    "table",
+    "sorting"
+  ],
+  "author": "MDM",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
@@ -24,8 +33,5 @@
   "bugs": {
     "url": "https://github.com/whileseated/node_csv_viewer/issues"
   },
-  "homepage": "https://github.com/whileseated/node_csv_viewer#readme",
-  "author": "MDM",
-  "keywords": ["csv", "tsv", "viewer", "spreadsheet", "data", "table", "sorting"]
+  "homepage": "https://github.com/whileseated/node_csv_viewer#readme"
 }
-
