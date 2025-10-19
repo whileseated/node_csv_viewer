@@ -14,8 +14,8 @@
         <input type="text" id="filterInput" class="filter-input" placeholder="Filter rows..." oninput="filterRows()" />
         <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
         <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
-        <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
         <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Checks</a>
+        <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
         <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export CSV</a>
     </div>
 
@@ -685,7 +685,14 @@
             allData.sort(sortFunction);
 
             markAsAdjusted();
-            displayData(currentData);
+
+            // If showing only checked rows, re-filter after sorting
+            if (showCheckedRows) {
+                const filteredData = allData.filter(row => checkedRows.has(row.ID));
+                displayData(filteredData);
+            } else {
+                displayData(currentData);
+            }
         }
 
         // Export CSV functionality
@@ -1164,7 +1171,7 @@
             if (overlay) overlay.remove();
             dialogs.forEach(d => {
                 // Only remove header dialogs, not export dialogs
-                if (d.textContent.includes('Add Header Row')) {
+                if (d.textContent.includes('Change Headers')) {
                     d.remove();
                 }
             });
