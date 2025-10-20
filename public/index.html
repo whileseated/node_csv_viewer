@@ -97,6 +97,87 @@
         let currentFilter = ''; // Track current filter text
         let currentSavedFilename = null; // Track currently loaded saved file for auto-save
         let autoSaveTimeout = null; // Debounce timer for auto-save
+        let currentFilename = null; // Track current filename to detect reloads
+        let savedUIState = null; // Store UI state for file reloads
+
+        // Save current UI state
+        function saveUIState() {
+            return {
+                filter: currentFilter,
+                sort: { ...currentSort },
+                columnWidths: { ...columnWidths },
+                checkedRows: new Set(checkedRows),
+                showRankColumn: showRankColumn,
+                showCheckboxColumn: showCheckboxColumn,
+                showDragHandle: showDragHandle,
+                showCheckedRows: showCheckedRows,
+                hasSignificantAdjustments: hasSignificantAdjustments,
+                currentSavedFilename: currentSavedFilename,
+                headers: currentHeaders ? [...currentHeaders] : null
+            };
+        }
+
+        // Restore UI state after file load
+        function restoreUIState(state, isReload) {
+            if (!state || !isReload) return;
+
+            // Restore simple flags
+            showRankColumn = state.showRankColumn;
+            showCheckboxColumn = state.showCheckboxColumn;
+            showDragHandle = state.showDragHandle;
+            showCheckedRows = state.showCheckedRows;
+            hasSignificantAdjustments = state.hasSignificantAdjustments;
+            currentSavedFilename = state.currentSavedFilename;
+
+            // Restore column widths if headers match
+            if (state.headers && currentHeaders &&
+                JSON.stringify(state.headers) === JSON.stringify(currentHeaders)) {
+                columnWidths = { ...state.columnWidths };
+
+                // Restore checked rows (they use the same ID system)
+                checkedRows = new Set(state.checkedRows);
+
+                // Restore sort
+                currentSort = { ...state.sort };
+                if (currentSort.column) {
+                    const sortFunction = (a, b) => {
+                        const valA = a[currentSort.column];
+                        const valB = b[currentSort.column];
+                        if (valA < valB) return currentSort.ascending ? -1 : 1;
+                        if (valA > valB) return currentSort.ascending ? 1 : -1;
+                        return 0;
+                    };
+                    currentData.sort(sortFunction);
+                    allData.sort(sortFunction);
+                }
+
+                // Restore filter
+                if (state.filter) {
+                    currentFilter = state.filter;
+                    document.getElementById('filterInput').value = state.filter;
+                    unfilteredData = [...currentData];
+                    const filterText = state.filter.toLowerCase();
+                    currentData = currentData.filter(row => {
+                        return currentHeaders.some(header => {
+                            const value = row[header];
+                            if (value === null || value === undefined) return false;
+                            return String(value).toLowerCase().includes(filterText);
+                        });
+                    });
+                }
+
+                // Update button states
+                document.getElementById('toggleRankColumnLink').classList.toggle('active', showRankColumn);
+                document.getElementById('toggleCheckmarkColumnLink').classList.toggle('active', showCheckboxColumn);
+                document.getElementById('toggleDragHandleLink').classList.toggle('active', showDragHandle);
+                document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
+
+                // Apply checked rows filter if it was active
+                if (showCheckedRows) {
+                    currentData = allData.filter(row => checkedRows.has(row.ID));
+                }
+            }
+        }
 
         // File input event listener
         document.getElementById('csvFile').addEventListener('change', uploadFile);
@@ -138,8 +219,11 @@
         async function uploadFile() {
             const csvFile = document.getElementById('csvFile').files[0];
             if (csvFile) {
-                // Clear saved filename when uploading new file
-                currentSavedFilename = null;
+                // Clear saved filename when uploading new file (not from server)
+                // But keep currentFilename for reload detection (handled in processFile)
+                if (csvFile.name !== currentSavedFilename) {
+                    currentSavedFilename = null;
+                }
                 processFile(csvFile, csvFile.name);
             }
         }
@@ -171,8 +255,8 @@
             indicator.style.display = 'inline-block';
 
             try {
-                // Generate CSV content (same as export)
-                const csvContent = generateCSVContent();
+                // Generate CSV content - use allData to save complete dataset, not filtered view
+                const csvContent = generateCSVContent(true);
 
                 // Send update to server
                 const response = await fetch(`/api/update/${encodeURIComponent(currentSavedFilename)}`, {
@@ -207,6 +291,19 @@
         }
 
         function processFile(file, filename) {
+            // Check if this is a reload of the same file
+            const isReload = (filename === currentFilename);
+
+            // Save current UI state if reloading
+            if (isReload && currentData.length > 0) {
+                savedUIState = saveUIState();
+            } else {
+                savedUIState = null;
+            }
+
+            // Update current filename
+            currentFilename = filename;
+
             // Update filename display
             const filenameElement = document.getElementById('currentFilename');
             if (filename) {
@@ -229,9 +326,8 @@
 
             Papa.parse(file, {
                 header: false,
-                dynamicTyping: true,
+                dynamicTyping: false,
                 skipEmptyLines: true,
-                delimiter: "",
                 chunk: function(results, parser) {
                     // Accumulate data from chunks
                     if (results && results.data) {
@@ -367,6 +463,9 @@
 
                         // Use setTimeout to allow UI to update before rendering
                         setTimeout(() => {
+                            // Restore UI state if this is a reload
+                            restoreUIState(savedUIState, isReload);
+
                             // Hide loading and show table
                             document.getElementById('loadingIndicator').style.display = 'none';
                             document.getElementById('tableContainer').style.display = 'block';
@@ -377,17 +476,21 @@
                                 document.getElementById('addHeaderBtn').style.display = 'block';
                             }
 
-                            // Clear filter input and state
-                            document.getElementById('filterInput').value = '';
-                            currentFilter = '';
-                            unfilteredData = [];
-
-                            // Update button states if they were automatically enabled
-                            if (showCheckboxColumn) {
-                                document.getElementById('toggleCheckmarkColumnLink').classList.add('active');
+                            // Only clear filter input and state if NOT reloading
+                            if (!isReload) {
+                                document.getElementById('filterInput').value = '';
+                                currentFilter = '';
+                                unfilteredData = [];
                             }
-                            if (showRankColumn) {
-                                document.getElementById('toggleRankColumnLink').classList.add('active');
+
+                            // Update button states if they were automatically enabled (only on fresh load)
+                            if (!isReload) {
+                                if (showCheckboxColumn) {
+                                    document.getElementById('toggleCheckmarkColumnLink').classList.add('active');
+                                }
+                                if (showRankColumn) {
+                                    document.getElementById('toggleRankColumnLink').classList.add('active');
+                                }
                             }
 
                             displayData(currentData);
@@ -463,7 +566,7 @@
                 if (showRankColumn) dataRow += `<td>${rowIndex + 1}</td>`;
                 if (showCheckboxColumn) {
                     const isChecked = checkedRows.has(row.ID) ? 'checked' : '';
-                    dataRow += `<td><input type="checkbox" ${isChecked} onclick="handleCheckboxChange(${row.ID}, ${rowIndex}, this, event)"></td>`;
+                    dataRow += `<td><input type="checkbox" ${isChecked} data-row-id="${row.ID}" data-row-index="${rowIndex}" onclick="handleCheckboxChange(${row.ID}, ${rowIndex}, this, event)"></td>`;
                 }
                 currentHeaders.forEach(header => {
                     const cellValue = row[header];
@@ -547,6 +650,14 @@
             }
         }
 
+        function updateRowCount() {
+            const rowCountElement = document.getElementById('rowCount');
+            const formattedCount = currentData.length >= 1000
+                ? `${(currentData.length / 1000).toFixed(1)}K`
+                : currentData.length;
+            rowCountElement.textContent = `${formattedCount} rows`;
+        }
+
         function markAsAdjusted() {
             hasSignificantAdjustments = true;
             updateUIVisibility();
@@ -583,6 +694,8 @@
         }
 
         function handleCheckboxChange(rowID, rowIndex, checkboxElem, event) {
+            // Ensure rowID is a string to match how IDs are stored in the data
+            rowID = String(rowID);
             // Handle shift-click range selection
             if (event.shiftKey && lastCheckedIndex !== null && lastCheckedIndex !== rowIndex) {
                 const start = Math.min(lastCheckedIndex, rowIndex);
@@ -605,17 +718,36 @@
 
                 // Refresh the display to show all checked boxes
                 displayData(currentData);
+                updateCheckedRowsButtonText();
             } else {
                 // Normal single checkbox toggle
                 if (checkboxElem.checked) {
                     checkedRows.add(rowID);
+                    // Update button text immediately
+                    updateCheckedRowsButtonText();
                 } else {
                     checkedRows.delete(rowID);
+
+                    // If we're in "Show Checks" mode and unchecking, remove the row visually
+                    if (showCheckedRows) {
+                        // Find and remove the table row from DOM
+                        const tableRow = checkboxElem.closest('tr');
+                        if (tableRow) {
+                            tableRow.remove();
+                            // Update currentData array to match
+                            currentData = currentData.filter(row => row.ID !== rowID);
+                            // Update counters AFTER removing from checkedRows and currentData
+                            updateCheckedRowsButtonText();
+                            updateRowCount();
+                        }
+                    } else {
+                        // Not in "Show Checks" mode, just update button text
+                        updateCheckedRowsButtonText();
+                    }
                 }
             }
 
             lastCheckedIndex = rowIndex;
-            updateCheckedRowsButtonText();
             triggerAutoSave();
         }
 
@@ -686,12 +818,13 @@
 
             if (showCheckedRows) {
                 // Only display rows that are checked
-                const filteredData = allData.filter(row => checkedRows.has(row.ID));
-                displayData(filteredData);
+                currentData = allData.filter(row => checkedRows.has(row.ID));
+                displayData(currentData);
                 markAsAdjusted();
             } else {
                 // Show all rows again
-                displayData(allData);
+                currentData = [...allData];
+                displayData(currentData);
             }
 
             document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
@@ -734,8 +867,9 @@
             if (filterText === '') {
                 if (currentFilter !== '') {
                     // Was filtering before, now clearing
-                    currentData = unfilteredData.length > 0 ? [...unfilteredData] : [...currentData];
+                    currentData = [...allData];
                     currentFilter = '';
+                    unfilteredData = [];
                     displayData(currentData);
                     updateUIVisibility();
                 }
@@ -744,11 +878,11 @@
 
             // Store unfiltered data if this is the first filter
             if (currentFilter === '') {
-                unfilteredData = [...currentData];
+                unfilteredData = [...allData];
             }
 
-            // Filter data - search across all columns
-            const filtered = unfilteredData.filter(row => {
+            // Filter data - search across all columns (always filter from allData to ensure we have complete dataset)
+            const filtered = allData.filter(row => {
                 // Check each column value
                 return currentHeaders.some(header => {
                     const value = row[header];
@@ -761,10 +895,11 @@
             currentData = filtered;
             displayData(currentData);
 
-            // Mark as adjusted if filter is active
-            if (filterText !== '') {
-                markAsAdjusted();
-            }
+            // DON'T trigger auto-save on filter - filtering is UI state, not data change
+            // Remove this to prevent saving filtered data:
+            // if (filterText !== '') {
+            //     markAsAdjusted();
+            // }
 
             updateUIVisibility();
         }
@@ -857,7 +992,7 @@
             showExportDialog();
         }
 
-        function generateCSVContent() {
+        function generateCSVContent(useFullData = false) {
             // Build CSV content
             let csvContent = '';
 
@@ -872,10 +1007,10 @@
             headers = headers.concat(currentHeaders);
             csvContent += headers.map(h => `"${h}"`).join(',') + '\n';
 
-            // Add data rows (use currentData which reflects current view/sort/filter)
-            const dataToExport = showCheckedRows
-                ? currentData
-                : currentData;
+            // Determine which data to export
+            // When useFullData is true (auto-save), always use allData to preserve complete dataset
+            // When exporting manually, use currentData which may be filtered
+            const dataToExport = useFullData ? allData : (showCheckedRows ? currentData : currentData);
 
             dataToExport.forEach((row, index) => {
                 let rowData = [];
