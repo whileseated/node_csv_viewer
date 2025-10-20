@@ -90,7 +90,7 @@ The server will start on `http://localhost:3000`
 
 ### Running in Development Mode (with auto-restart)
 
-The term you're looking for is **"hot reload"** or **"auto-restart"**. This uses [nodemon](https://nodemon.io/) to automatically restart the server when you make changes to the code:
+This mode uses [nodemon](https://nodemon.io/) to automatically restart the server when you make changes to the code (also known as "hot reload" or "auto-restart"):
 
 ```bash
 npm run dev
@@ -133,9 +133,9 @@ This will:
    - **Check None** to clear all selections
 8. **Click URLs** in cells to open in new tab
 9. **Export options:**
-   - Click "Export CSV" to open export dialog
-   - Choose "Download to computer" to save locally
-   - Choose "Save to server" to save for later access
+   - **Click "Export CSV"** to open export dialog
+   - **Choose "Download to computer"** to save locally
+   - **Choose "Save to server"** to save for later access
    - **Note:** Rank and Checked columns are included in export when enabled
 
 #### Saved Files Tab
