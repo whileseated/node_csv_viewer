@@ -163,6 +163,16 @@ The application provides RESTful endpoints for managing saved CSV files:
 
 Saved files are stored in the `saved_csvs/` directory with metadata tracked in `saved_csvs/metadata.json`.
 
+#### Metadata Reliability
+
+The application uses a dual-layer synchronization strategy to ensure metadata accuracy:
+
+- **Startup Sync:** On server start, metadata is automatically synchronized with actual files on disk, removing any orphaned entries for missing files
+- **Runtime Validation:** The `/api/saved-files` endpoint validates file existence before returning results, ensuring clients never receive references to missing files
+- **Self-Healing:** If CSV files are manually deleted from the `saved_csvs/` directory, they are automatically removed from metadata on the next server restart
+
+This design prevents errors when files are manually managed outside the API.
+
 ## Configuration
 
 ### Port Configuration
@@ -231,6 +241,7 @@ Your saved CSV files will now persist in the `./saved_csvs` directory on your ho
 - Server handles uncaught exceptions and unhandled promise rejections gracefully
 - Client-side CSV parsing errors are displayed to users via alerts
 - Invalid file types trigger validation warnings
+- Metadata automatically syncs with disk to prevent references to missing files
 
 ## Development
 

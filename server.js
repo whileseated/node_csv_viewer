@@ -6,7 +6,7 @@ const app = express();
 
 // Middleware
 app.use(express.static('public'));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increase body size limit for large CSV files
 
 // Storage configuration for multer
 const storage = multer.diskStorage({
@@ -68,16 +68,55 @@ function sanitizeFilename(filename) {
   return filename.replace(/[^a-zA-Z0-9.-_]/g, '_');
 }
 
+// Helper function to sync metadata with actual files on disk
+async function syncMetadataWithFiles() {
+  try {
+    const metadata = await readMetadata();
+    const files = await fs.readdir(SAVED_CSV_DIR);
+
+    // Remove metadata entries for files that don't exist
+    let changed = false;
+    for (const filename of Object.keys(metadata)) {
+      // Skip metadata.json itself and check if the actual CSV file exists
+      if (filename !== 'metadata.json' && !files.includes(filename)) {
+        delete metadata[filename];
+        changed = true;
+        console.log(`Removed orphaned metadata entry: ${filename}`);
+      }
+    }
+
+    if (changed) {
+      await writeMetadata(metadata);
+      console.log('Metadata synchronized with files on disk');
+    }
+  } catch (error) {
+    console.error('Error syncing metadata:', error);
+  }
+}
+
 // API Endpoints
 
 // GET /api/saved-files - List all saved CSV files
 app.get('/api/saved-files', async (req, res) => {
   try {
     const metadata = await readMetadata();
-    const fileList = Object.keys(metadata).map(filename => ({
-      filename: filename,
-      ...metadata[filename]
-    }));
+
+    // Validate that each file actually exists before including it
+    const fileList = [];
+    for (const filename of Object.keys(metadata)) {
+      const filePath = path.join(SAVED_CSV_DIR, filename);
+      try {
+        await fs.access(filePath);
+        // File exists, include it in the list
+        fileList.push({
+          filename: filename,
+          ...metadata[filename]
+        });
+      } catch {
+        // File doesn't exist, skip it (it will be cleaned up on next server restart)
+        console.warn(`Skipping missing file in metadata: ${filename}`);
+      }
+    }
 
     // Sort by lastModified descending (newest first)
     fileList.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
@@ -236,7 +275,49 @@ app.delete('/api/delete/:filename', async (req, res) => {
   }
 });
 
+// PUT /api/update/:filename - Update the content of a saved CSV file
+app.put('/api/update/:filename', async (req, res) => {
+  try {
+    const filename = sanitizeFilename(req.params.filename);
+    const filePath = path.join(SAVED_CSV_DIR, filename);
+    const csvContent = req.body.content;
+
+    if (!csvContent) {
+      return res.status(400).json({ success: false, error: 'No content provided' });
+    }
+
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+
+    // Write new content to file
+    await fs.writeFile(filePath, csvContent, 'utf8');
+
+    // Update metadata
+    const metadata = await readMetadata();
+    if (metadata[filename]) {
+      metadata[filename].lastModified = new Date().toISOString();
+      metadata[filename].size = Buffer.byteLength(csvContent, 'utf8');
+      await writeMetadata(metadata);
+    }
+
+    res.json({
+      success: true,
+      message: 'File updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating file:', error);
+    res.status(500).json({ success: false, error: 'Failed to update file' });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`CSV/TSV Viewer server is running on http://localhost:${PORT}`);
+
+  // Sync metadata with actual files on disk
+  await syncMetadataWithFiles();
 });

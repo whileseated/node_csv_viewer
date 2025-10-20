@@ -11,6 +11,8 @@
 <body>
     <div class="options-container" id="optionsContainer" style="display: none;">
         <span id="rowCount" class="row-count-badge"></span>
+        <span id="autoSaveIndicator" class="auto-save-indicator" style="display: none;"></span>
+        <a href="#" id="showAllLink" onclick="showAllRows()" style="display: none;">Show All</a>
         <input type="text" id="filterInput" class="filter-input" placeholder="Filter rows..." oninput="filterRows()" />
         <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
         <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
@@ -28,6 +30,7 @@
         <!-- Tab Navigation -->
         <div class="tab-container">
             <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
+            <span class="current-filename" id="currentFilename"></span>
             <button class="tab-button active" id="uploadTab" onclick="switchTab('upload')">Upload New</button>
             <button class="tab-button" id="savedTab" onclick="switchTab('saved')">Saved Files</button>
         </div>
@@ -92,6 +95,8 @@
         let startX = 0;
         let startWidth = 0;
         let currentFilter = ''; // Track current filter text
+        let currentSavedFilename = null; // Track currently loaded saved file for auto-save
+        let autoSaveTimeout = null; // Debounce timer for auto-save
 
         // File input event listener
         document.getElementById('csvFile').addEventListener('change', uploadFile);
@@ -123,7 +128,7 @@
                 const isValid = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
 
                 if (isValid) {
-                    processFile(file);
+                    processFile(file, file.name);
                 } else {
                     alert('Please drop a CSV, TSV, or TXT file');
                 }
@@ -133,11 +138,81 @@
         async function uploadFile() {
             const csvFile = document.getElementById('csvFile').files[0];
             if (csvFile) {
-                processFile(csvFile);
+                // Clear saved filename when uploading new file
+                currentSavedFilename = null;
+                processFile(csvFile, csvFile.name);
             }
         }
 
-        function processFile(file) {
+        // Auto-save functionality
+        function triggerAutoSave() {
+            if (!currentSavedFilename) {
+                return; // Only auto-save if file was loaded from saved files
+            }
+
+            // Clear existing timeout
+            if (autoSaveTimeout) {
+                clearTimeout(autoSaveTimeout);
+            }
+
+            // Debounce: wait 500ms after last change before saving
+            autoSaveTimeout = setTimeout(async () => {
+                await performAutoSave();
+            }, 500);
+        }
+
+        async function performAutoSave() {
+            if (!currentSavedFilename || !currentData || currentData.length === 0) {
+                return;
+            }
+
+            const indicator = document.getElementById('autoSaveIndicator');
+            indicator.textContent = 'Saving...';
+            indicator.style.display = 'inline-block';
+
+            try {
+                // Generate CSV content (same as export)
+                const csvContent = generateCSVContent();
+
+                // Send update to server
+                const response = await fetch(`/api/update/${encodeURIComponent(currentSavedFilename)}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ content: csvContent })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    indicator.textContent = 'Saved';
+                    setTimeout(() => {
+                        indicator.style.display = 'none';
+                    }, 2000);
+                } else {
+                    indicator.textContent = 'Save failed';
+                    console.error('Auto-save failed:', data.error);
+                    setTimeout(() => {
+                        indicator.style.display = 'none';
+                    }, 3000);
+                }
+            } catch (error) {
+                console.error('Auto-save error:', error);
+                indicator.textContent = 'Save failed';
+                setTimeout(() => {
+                    indicator.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        function processFile(file, filename) {
+            // Update filename display
+            const filenameElement = document.getElementById('currentFilename');
+            if (filename) {
+                filenameElement.textContent = filename;
+            }
+
             // Hide add header button while processing
             document.getElementById('addHeaderBtn').style.display = 'none';
 
@@ -400,6 +475,11 @@
             });
 
             tableBody.innerHTML = rows.join('');
+
+            // Update the checked rows button text to reflect current count
+            if (showCheckboxColumn) {
+                updateCheckedRowsButtonText();
+            }
         }
 
         function makeLinksClickable(text) {
@@ -439,6 +519,32 @@
             } else {
                 exportLink.style.display = 'none';
             }
+
+            // Show "Show All" button when viewing filtered data
+            const showAllLink = document.getElementById('showAllLink');
+            if (showCheckedRows || currentFilter !== '') {
+                showAllLink.style.display = 'inline-block';
+            } else {
+                showAllLink.style.display = 'none';
+            }
+
+            // Update the checked rows button text with count
+            updateCheckedRowsButtonText();
+        }
+
+        function updateCheckedRowsButtonText() {
+            const showCheckedRowsLink = document.getElementById('showCheckedRowsLink');
+            const count = checkedRows.size;
+
+            if (showCheckedRows) {
+                showCheckedRowsLink.textContent = `Showing ${count} Check${count === 1 ? '' : 's'}`;
+            } else {
+                if (count > 0) {
+                    showCheckedRowsLink.textContent = `Show ${count} Check${count === 1 ? '' : 's'}`;
+                } else {
+                    showCheckedRowsLink.textContent = 'Show Checks';
+                }
+            }
         }
 
         function markAsAdjusted() {
@@ -461,7 +567,12 @@
         function toggleCheckmarkColumn() {
             showCheckboxColumn = !showCheckboxColumn;
             document.getElementById('toggleCheckmarkColumnLink').classList.toggle('active', showCheckboxColumn);
-            updateUIVisibility(); // Update visibility of "Show Only Checked Rows"
+            if (showCheckboxColumn) {
+                markAsAdjusted();
+            } else {
+                // Still update visibility when toggling off
+                updateUIVisibility();
+            }
             displayData(currentData);
         }
 
@@ -504,6 +615,8 @@
             }
 
             lastCheckedIndex = rowIndex;
+            updateCheckedRowsButtonText();
+            triggerAutoSave();
         }
 
         function checkAll() {
@@ -511,11 +624,15 @@
                 checkedRows.add(row.ID);
             });
             displayData(currentData);
+            updateCheckedRowsButtonText();
+            triggerAutoSave();
         }
 
         function checkNone() {
             checkedRows.clear();
             displayData(currentData);
+            updateCheckedRowsButtonText();
+            triggerAutoSave();
         }
 
         // Column resizing functionality
@@ -565,19 +682,47 @@
         });
 
         function toggleCheckedRows() {
-            if (!showCheckedRows) {
+            showCheckedRows = !showCheckedRows;
+
+            if (showCheckedRows) {
                 // Only display rows that are checked
                 const filteredData = allData.filter(row => checkedRows.has(row.ID));
                 displayData(filteredData);
-                document.getElementById('showCheckedRowsLink').textContent = "Show All";
                 markAsAdjusted();
             } else {
                 // Show all rows again
                 displayData(allData);
-                document.getElementById('showCheckedRowsLink').textContent = "Show Checks";
             }
-            showCheckedRows = !showCheckedRows;
+
             document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
+            updateCheckedRowsButtonText();
+            updateUIVisibility();
+        }
+
+        function showAllRows() {
+            // Reset checked rows filter
+            if (showCheckedRows) {
+                showCheckedRows = false;
+                document.getElementById('showCheckedRowsLink').classList.remove('active');
+                updateCheckedRowsButtonText();
+            }
+
+            // Reset search filter
+            if (currentFilter !== '') {
+                document.getElementById('filterInput').value = '';
+                currentFilter = '';
+            }
+
+            // Restore all data
+            if (unfilteredData.length > 0) {
+                currentData = [...unfilteredData];
+                unfilteredData = [];
+            } else {
+                currentData = [...allData];
+            }
+
+            displayData(currentData);
+            updateUIVisibility();
         }
 
         // Filter rows based on search term
@@ -592,6 +737,7 @@
                     currentData = unfilteredData.length > 0 ? [...unfilteredData] : [...currentData];
                     currentFilter = '';
                     displayData(currentData);
+                    updateUIVisibility();
                 }
                 return;
             }
@@ -619,6 +765,8 @@
             if (filterText !== '') {
                 markAsAdjusted();
             }
+
+            updateUIVisibility();
         }
 
         function parseCSV(file) {
@@ -657,6 +805,7 @@
                 currentData.splice(index, 0, draggedRow);
                 markAsAdjusted();
                 displayData(currentData);
+                triggerAutoSave();
             }
         }
 
@@ -693,6 +842,8 @@
             } else {
                 displayData(currentData);
             }
+
+            triggerAutoSave();
         }
 
         // Export CSV functionality
@@ -785,6 +936,8 @@
                 if (!hasCustomHeaders && currentData.length > 0) {
                     document.getElementById('addHeaderBtn').style.display = 'block';
                 }
+                // Show filename if we have data loaded
+                // (filename is already set by processFile, so no need to change it here)
             } else if (tab === 'saved') {
                 // Check if saved tab is already active - if so, just collapse the list
                 const savedTabActive = document.getElementById('savedTab').classList.contains('active');
@@ -891,9 +1044,12 @@
                 hasCustomHeaders = false;
                 rawFileData = [];
 
+                // Track which saved file is loaded for auto-save
+                currentSavedFilename = filename;
+
                 // Switch to upload tab and process the file
                 switchTab('upload');
-                processFile(file);
+                processFile(file, filename);
             } catch (error) {
                 console.error('Error loading file:', error);
                 alert('Failed to load file: ' + error.message);
@@ -1187,17 +1343,22 @@
                 currentHeaders = rawFileData[1];
                 currentData = rawFileData.slice(2);
             } else if (headerType === 'custom') {
-                // Prompt for custom headers
-                const numberOfColumns = rawFileData[0].length;
+                // Prompt for custom headers - use current headers length (already has Checked/Rank stripped)
+                const numberOfColumns = currentHeaders.length;
                 const newHeadersPrompt = `Enter ${numberOfColumns} column headers separated by commas:`;
                 const newHeadersInput = prompt(newHeadersPrompt);
 
                 if (newHeadersInput) {
                     const newHeaders = newHeadersInput.split(',').map(h => h.trim());
                     if (newHeaders.length === numberOfColumns) {
+                        // Convert current data objects back to arrays using old headers order
+                        const oldHeaders = [...currentHeaders]; // Save old headers
                         currentHeaders = newHeaders;
-                        // Keep first row as data when using custom headers
-                        currentData = rawFileData.slice(1);
+
+                        // Convert data from objects to arrays based on old headers
+                        currentData = currentData.map(row => {
+                            return oldHeaders.map(header => row[header]);
+                        });
                     } else {
                         alert(`Please provide exactly ${numberOfColumns} headers. You provided ${newHeaders.length}.`);
                         return;
@@ -1205,6 +1366,26 @@
                 } else {
                     return; // User cancelled
                 }
+            }
+
+            // Check if headers include "Checked" or "Rank" columns (from raw data)
+            // These should be UI state, not data columns
+            const checkedColumnIndex = currentHeaders.indexOf('Checked');
+            const rankColumnIndex = currentHeaders.indexOf('Rank');
+
+            // Strip out Checked/Rank columns if present (when using second-row option)
+            if (checkedColumnIndex !== -1 || rankColumnIndex !== -1) {
+                // Remove from headers
+                currentHeaders = currentHeaders.filter(h => h !== 'Checked' && h !== 'Rank');
+
+                // Remove from data
+                currentData = currentData.map(row => {
+                    if (Array.isArray(row)) {
+                        // If row is still array (from rawFileData), filter by index
+                        return row.filter((_, i) => i !== checkedColumnIndex && i !== rankColumnIndex);
+                    }
+                    return row; // Already processed
+                });
             }
 
             // Remap data with new headers
