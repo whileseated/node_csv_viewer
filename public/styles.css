@@ -365,6 +365,23 @@ body {
     align-items: center;
 }
 
+.delete-button {
+    padding: 5px 12px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #ffebee;
+    color: #333;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: 'Source Code Pro', sans-serif;
+    transition: background 0.2s ease;
+}
+
+.delete-button:hover {
+    background: #ffcdd2;
+}
+
 .add-header-button {
     padding: 5px 12px;
     border: 1px solid #ddd;

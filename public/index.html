@@ -31,6 +31,7 @@
     <div class="container mt-3">
         <!-- Tab Navigation -->
         <div class="tab-container">
+            <button class="delete-button" id="deleteBtn" onclick="showDeleteDialog()" style="display: none;" title="Delete rows or columns">−</button>
             <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
             <span class="current-filename" id="currentFilename"></span>
             <button class="tab-button active" id="uploadTab" onclick="switchTab('upload')">Upload New</button>
@@ -312,8 +313,9 @@
                 filenameElement.textContent = filename;
             }
 
-            // Hide add header button while processing
+            // Hide add header and delete buttons while processing
             document.getElementById('addHeaderBtn').style.display = 'none';
+            document.getElementById('deleteBtn').style.display = 'none';
 
             // Show loading indicator
             document.getElementById('uploadSection').style.display = 'none';
@@ -479,6 +481,9 @@
                             document.getElementById('loadingIndicator').style.display = 'none';
                             document.getElementById('tableContainer').style.display = 'block';
                             document.getElementById('optionsContainer').style.display = 'flex';
+
+                            // Show delete button whenever data is loaded
+                            document.getElementById('deleteBtn').style.display = 'block';
 
                             // Show add header button if using default headers
                             if (!hasCustomHeaders) {
@@ -1126,6 +1131,10 @@
                 document.getElementById('savedTab').classList.remove('active');
                 document.getElementById('uploadSection').style.display = 'block';
                 document.getElementById('savedFilesSection').style.display = 'none';
+                // Show delete button if we have data loaded
+                if (currentData.length > 0) {
+                    document.getElementById('deleteBtn').style.display = 'block';
+                }
                 // Show add header button if using default headers
                 if (!hasCustomHeaders && currentData.length > 0) {
                     document.getElementById('addHeaderBtn').style.display = 'block';
@@ -1146,7 +1155,8 @@
                     document.getElementById('savedTab').classList.add('active');
                     document.getElementById('uploadSection').style.display = 'none';
                     document.getElementById('savedFilesSection').style.display = 'block';
-                    // Hide add header button when viewing saved files
+                    // Hide buttons when viewing saved files
+                    document.getElementById('deleteBtn').style.display = 'none';
                     document.getElementById('addHeaderBtn').style.display = 'none';
                     // Load saved files when switching to this tab
                     loadSavedFiles();
@@ -1512,6 +1522,145 @@
             } else {
                 return date.toLocaleDateString();
             }
+        }
+
+        // Delete functionality
+        function showDeleteDialog() {
+            const overlay = document.createElement('div');
+            overlay.className = 'export-dialog-overlay';
+            overlay.id = 'deleteDialogOverlay';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'export-dialog';
+            dialog.innerHTML = `
+                <div style="margin-bottom: 10px; font-weight: bold;">Delete Rows or Columns</div>
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="deleteType" value="rows" checked style="margin-right: 5px;">
+                        Delete checked rows
+                    </label>
+                    <label style="display: block; cursor: pointer;">
+                        <input type="radio" name="deleteType" value="columns" style="margin-right: 5px;">
+                        Delete a column
+                    </label>
+                </div>
+                <div class="export-dialog-buttons">
+                    <button class="file-action-btn" onclick="closeDeleteDialog()">Cancel</button>
+                    <button class="file-action-btn" onclick="handleDelete()" style="background: #ffebee; font-weight: bold;">Delete</button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+
+            overlay.onclick = closeDeleteDialog;
+        }
+
+        function closeDeleteDialog() {
+            const overlay = document.getElementById('deleteDialogOverlay');
+            const dialogs = document.querySelectorAll('.export-dialog');
+
+            if (overlay) overlay.remove();
+            dialogs.forEach(d => {
+                if (d.textContent.includes('Delete Rows or Columns') || d.textContent.includes('Select Column to Delete')) {
+                    d.remove();
+                }
+            });
+        }
+
+        function handleDelete() {
+            const deleteType = document.querySelector('input[name="deleteType"]:checked').value;
+
+            closeDeleteDialog();
+
+            if (deleteType === 'rows') {
+                deleteCheckedRows();
+            } else if (deleteType === 'columns') {
+                showColumnSelectionDialog();
+            }
+        }
+
+        function showColumnSelectionDialog() {
+            const overlay = document.createElement('div');
+            overlay.className = 'export-dialog-overlay';
+            overlay.id = 'deleteDialogOverlay';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'export-dialog';
+
+            let columnsHTML = '';
+            currentHeaders.forEach((header, index) => {
+                columnsHTML += `
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="columnToDelete" value="${index}" ${index === 0 ? 'checked' : ''} style="margin-right: 5px;">
+                        ${header}
+                    </label>
+                `;
+            });
+
+            dialog.innerHTML = `
+                <div style="margin-bottom: 10px; font-weight: bold;">Select Column to Delete</div>
+                <div style="margin-bottom: 10px; max-height: 300px; overflow-y: auto;">
+                    ${columnsHTML}
+                </div>
+                <div class="export-dialog-buttons">
+                    <button class="file-action-btn" onclick="closeDeleteDialog()">Cancel</button>
+                    <button class="file-action-btn" onclick="deleteSelectedColumn()" style="background: #ffebee; font-weight: bold;">Delete Column</button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+
+            overlay.onclick = closeDeleteDialog;
+        }
+
+        function deleteSelectedColumn() {
+            const selectedIndex = document.querySelector('input[name="columnToDelete"]:checked').value;
+            const columnIndex = parseInt(selectedIndex);
+            const columnName = currentHeaders[columnIndex];
+
+            if (!confirm(`Are you sure you want to delete the column "${columnName}"? This cannot be undone.`)) {
+                closeDeleteDialog();
+                return;
+            }
+
+            closeDeleteDialog();
+
+            // Remove the column from headers
+            currentHeaders.splice(columnIndex, 1);
+
+            // Remove the column from all data
+            currentData = currentData.map(row => {
+                const newRow = { ...row };
+                delete newRow[columnName];
+                return newRow;
+            });
+
+            allData = allData.map(row => {
+                const newRow = { ...row };
+                delete newRow[columnName];
+                return newRow;
+            });
+
+            // Remove from unfiltered data if it exists
+            if (unfilteredData.length > 0) {
+                unfilteredData = unfilteredData.map(row => {
+                    const newRow = { ...row };
+                    delete newRow[columnName];
+                    return newRow;
+                });
+            }
+
+            // Remove from column widths
+            if (columnWidths[columnName]) {
+                delete columnWidths[columnName];
+            }
+
+            // Mark as adjusted and trigger auto-save
+            markAsAdjusted();
+            displayData(currentData);
+            triggerAutoSave();
         }
 
         // Add header functionality
