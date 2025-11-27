@@ -1,4 +1,7 @@
 node_modules/
-.DS_Store
-.env
-*.log
+uploads/
+saved_csvs/
+docs/
+todo.md
+STYLE_GUIDE.md
+Dockerfile

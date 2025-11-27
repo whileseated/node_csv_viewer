@@ -1,5 +1,5 @@
 {
-  "name": "20230920_csv_viewer",
+  "name": "csv-viewer",
   "version": "1.0.0",
   "description": "CSV/TSV Viewer with drag-and-drop, sorting, resizable columns, and URL detection",
   "main": "server.js",

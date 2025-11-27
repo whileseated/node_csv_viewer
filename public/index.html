@@ -18,12 +18,14 @@
         <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
         <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Checks</a>
         <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
-        <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export CSV</a>
+        <a href="#" id="saveLink" onclick="saveCSV()" style="display: none;">Save</a>
+        <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export</a>
     </div>
 
     <div class="bulk-actions-container" id="bulkActionsContainer" style="display: none;">
         <a href="#" id="checkAllLink" onclick="checkAll()">Check All</a>
         <a href="#" id="checkNoneLink" onclick="checkNone()">Check None</a>
+        <a href="#" id="deleteCheckedLink" onclick="deleteCheckedRows()">Delete Checked</a>
     </div>
 
     <div class="container mt-3">
@@ -259,7 +261,7 @@
                 const csvContent = generateCSVContent(true);
 
                 // Send update to server
-                const response = await fetch(`/api/update/${encodeURIComponent(currentSavedFilename)}`, {
+                const response = await fetch(`api/update/${encodeURIComponent(currentSavedFilename)}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -438,6 +440,10 @@
 
                             // Enable checkbox column
                             showCheckboxColumn = true;
+                        } else if (!isReload) {
+                            // No "Checked" column and not a reload - clear checked rows and reset checkbox column
+                            checkedRows.clear();
+                            showCheckboxColumn = false;
                         }
 
                         // If there's a "Rank" column, remove it and enable rank column
@@ -454,6 +460,9 @@
 
                             // Enable rank column
                             showRankColumn = true;
+                        } else if (!isReload) {
+                            // No "Rank" column and not a reload - reset rank column
+                            showRankColumn = false;
                         }
 
                         allData = [...currentData];
@@ -615,6 +624,14 @@
                 bulkActionsContainer.style.display = 'none';
             }
 
+            // Show save button only when file is from saved files
+            const saveLink = document.getElementById('saveLink');
+            if (currentSavedFilename) {
+                saveLink.style.display = 'inline-block';
+            } else {
+                saveLink.style.display = 'none';
+            }
+
             // Show export button only when significant adjustments have been made
             const exportLink = document.getElementById('exportCSVLink');
             if (hasSignificantAdjustments) {
@@ -694,8 +711,8 @@
         }
 
         function handleCheckboxChange(rowID, rowIndex, checkboxElem, event) {
-            // Ensure rowID is a string to match how IDs are stored in the data
-            rowID = String(rowID);
+            // Ensure rowID is a number to match how IDs are stored in the data
+            rowID = Number(rowID);
             // Handle shift-click range selection
             if (event.shiftKey && lastCheckedIndex !== null && lastCheckedIndex !== rowIndex) {
                 const start = Math.min(lastCheckedIndex, rowIndex);
@@ -764,6 +781,48 @@
             checkedRows.clear();
             displayData(currentData);
             updateCheckedRowsButtonText();
+            triggerAutoSave();
+        }
+
+        function deleteCheckedRows() {
+            if (checkedRows.size === 0) {
+                alert('No rows are checked');
+                return;
+            }
+
+            const count = checkedRows.size;
+            if (!confirm(`Are you sure you want to delete ${count} checked row${count === 1 ? '' : 's'}? This cannot be undone.`)) {
+                return;
+            }
+
+            // Remove checked rows from both currentData and allData
+            currentData = currentData.filter(row => !checkedRows.has(row.ID));
+            allData = allData.filter(row => !checkedRows.has(row.ID));
+
+            // Reassign IDs to maintain sequential numbering
+            currentData = currentData.map((row, index) => ({
+                ...row,
+                ID: index + 1
+            }));
+            allData = allData.map((row, index) => ({
+                ...row,
+                ID: index + 1
+            }));
+
+            // Clear checked rows since they've been deleted
+            checkedRows.clear();
+
+            // If we were in "Show Checks" mode, exit it since there are no more checked rows
+            if (showCheckedRows) {
+                showCheckedRows = false;
+                document.getElementById('showCheckedRowsLink').classList.remove('active');
+            }
+
+            // Mark as adjusted and trigger auto-save
+            markAsAdjusted();
+            displayData(currentData);
+            updateCheckedRowsButtonText();
+            updateUIVisibility();
             triggerAutoSave();
         }
 
@@ -1104,7 +1163,7 @@
             filesList.innerHTML = '';
 
             try {
-                const response = await fetch('/api/saved-files');
+                const response = await fetch('api/saved-files');
                 const data = await response.json();
 
                 loadingIndicator.style.display = 'none';
@@ -1167,7 +1226,7 @@
 
         async function loadSavedFile(filename) {
             try {
-                const response = await fetch(`/api/file/${encodeURIComponent(filename)}`);
+                const response = await fetch(`api/file/${encodeURIComponent(filename)}`);
                 if (!response.ok) {
                     throw new Error('Failed to load file');
                 }
@@ -1232,7 +1291,7 @@
             }
 
             try {
-                const response = await fetch(`/api/rename/${encodeURIComponent(oldFilename)}`, {
+                const response = await fetch(`api/rename/${encodeURIComponent(oldFilename)}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1271,7 +1330,7 @@
             }
 
             try {
-                const response = await fetch(`/api/delete/${encodeURIComponent(filename)}`, {
+                const response = await fetch(`api/delete/${encodeURIComponent(filename)}`, {
                     method: 'DELETE'
                 });
 
@@ -1342,11 +1401,54 @@
             }
         }
 
+        async function saveCSV() {
+            if (!currentSavedFilename) {
+                alert('No saved file is currently loaded');
+                return;
+            }
+
+            try {
+                // Generate CSV content - use allData to save complete dataset
+                const csvContent = generateCSVContent(true);
+
+                // Send update to server
+                const response = await fetch(`api/update/${encodeURIComponent(currentSavedFilename)}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ content: csvContent })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Show brief success message
+                    const saveLink = document.getElementById('saveLink');
+                    const originalText = saveLink.textContent;
+                    saveLink.textContent = 'Saved!';
+                    setTimeout(() => {
+                        saveLink.textContent = originalText;
+                    }, 1500);
+                } else {
+                    alert('Failed to save file: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error saving file:', error);
+                alert('Failed to save file: ' + error.message);
+            }
+        }
+
         async function saveToServer() {
-            const filename = prompt('Enter a filename for the saved CSV:', `csv_export_${new Date().toISOString().slice(0, 10)}.csv`);
+            let filename = prompt('Enter a filename for the saved CSV:', `csv_export_${new Date().toISOString().slice(0, 10)}`);
 
             if (!filename) {
                 return; // User cancelled
+            }
+
+            // Automatically add .csv extension if not present
+            if (!filename.toLowerCase().endsWith('.csv')) {
+                filename = filename + '.csv';
             }
 
             const csvContent = generateCSVContent();
@@ -1357,7 +1459,7 @@
             formData.append('file', file);
 
             try {
-                const response = await fetch('/api/upload', {
+                const response = await fetch('api/upload', {
                     method: 'POST',
                     body: formData
                 });
