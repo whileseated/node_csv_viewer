@@ -1,9 +1,14 @@
 body {
-    font-family: 'Source Code Pro', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 12px;
     line-height: 1.2;
     color: #333;
     background-color: #f5f5f5;
+}
+
+strong, b {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
 }
 
 .container {
@@ -38,6 +43,7 @@ body {
     border: 1px solid #ddd;
     border-radius: 3px;
     background: #fff;
+    font-family: 'Inter', sans-serif;
 }
 
 .bulk-actions-container a:hover {
@@ -53,6 +59,7 @@ body {
     border: 1px solid #ddd;
     border-radius: 3px;
     background: #f5f5f5;
+    font-family: 'Inter', sans-serif;
 }
 
 .options-container a:hover {
@@ -72,12 +79,13 @@ body {
 .row-count-badge {
     display: inline-block;
     color: #333;
-    font-size: 12px;
+    font-size: 11px;
     padding: 3px 8px;
     border: 1px solid #ddd;
     border-radius: 3px;
     background-color: #f1f8e9;
     font-weight: normal;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 .auto-save-indicator {
@@ -89,6 +97,7 @@ body {
     border-radius: 3px;
     background-color: #fff3e0;
     font-style: italic;
+    font-family: 'Source Code Pro', sans-serif;
     animation: fadeIn 0.3s ease-in;
 }
 
@@ -156,13 +165,43 @@ body {
 .table thead th {
     background-color: #e8eaf6;
     color: #333;
-    font-weight: bold;
+    font-weight: 600;
     border-bottom: 1px solid #ddd;
     position: relative;
+    font-family: 'Inter', sans-serif;
 }
 
 .resizable-header {
     position: relative;
+}
+
+.header-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.header-label {
+    display: inline-block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.header-edit-input {
+    width: 100%;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    background: #fff;
+    box-sizing: border-box;
+    font-family: 'Source Code Pro', sans-serif;
+}
+
+.header-edit-input:focus {
+    outline: 2px solid #c5cae9;
 }
 
 .resize-handle {
@@ -285,15 +324,17 @@ body {
 
 .drop-zone-text {
     font-size: 14px;
-    font-weight: bold;
+    font-weight: 600;
     color: #333;
     margin-bottom: 10px;
+    font-family: 'Inter', sans-serif;
 }
 
 .drop-zone-or {
     font-size: 11px;
     color: #666;
     margin-bottom: 10px;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 .file-button {
@@ -306,6 +347,7 @@ body {
     font-size: 12px;
     cursor: pointer;
     margin-bottom: 10px;
+    font-family: 'Inter', sans-serif;
 }
 
 .file-button:hover {
@@ -319,6 +361,7 @@ body {
 .drop-zone-hint {
     font-size: 11px;
     color: #999;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 .loading-indicator {
@@ -346,14 +389,16 @@ body {
 
 .loading-text {
     font-size: 14px;
-    font-weight: bold;
+    font-weight: 600;
     color: #333;
     margin-bottom: 5px;
+    font-family: 'Inter', sans-serif;
 }
 
 .loading-details {
     font-size: 11px;
     color: #666;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 /* Tab Navigation */
@@ -374,7 +419,7 @@ body {
     font-size: 16px;
     font-weight: bold;
     cursor: pointer;
-    font-family: 'Source Code Pro', sans-serif;
+    font-family: 'Inter', sans-serif;
     transition: background 0.2s ease;
 }
 
@@ -391,7 +436,7 @@ body {
     font-size: 16px;
     font-weight: bold;
     cursor: pointer;
-    font-family: 'Source Code Pro', sans-serif;
+    font-family: 'Inter', sans-serif;
     margin-right: auto;
     transition: background 0.2s ease;
 }
@@ -408,6 +453,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 300px;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 .tab-button {
@@ -418,7 +464,7 @@ body {
     color: #333;
     font-size: 12px;
     cursor: pointer;
-    font-family: 'Source Code Pro', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 .tab-button:hover {
@@ -456,7 +502,8 @@ body {
 
 .saved-files-table th {
     background-color: #e8eaf6;
-    font-weight: bold;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
 }
 
 .saved-files-table tr:hover {
@@ -501,7 +548,7 @@ body {
     color: #333;
     font-size: 11px;
     cursor: pointer;
-    font-family: 'Source Code Pro', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 .file-action-btn:hover {
@@ -521,6 +568,7 @@ body {
     padding: 40px;
     color: #666;
     font-size: 12px;
+    font-family: 'Source Code Pro', sans-serif;
 }
 
 /* Export Dialog */

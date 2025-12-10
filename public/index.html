@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="styles.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
 <title>CSV/TSV Viewer</title>
@@ -102,6 +103,9 @@
         let autoSaveTimeout = null; // Debounce timer for auto-save
         let currentFilename = null; // Track current filename to detect reloads
         let savedUIState = null; // Store UI state for file reloads
+        let editingHeaderIndex = null; // Track which header is being edited
+        let pendingHeaderName = ''; // Current input value while editing
+        let originalHeaderName = null; // Preserve original header for rename operations
 
         // Save current UI state
         function saveUIState() {
@@ -144,10 +148,25 @@
                 currentSort = { ...state.sort };
                 if (currentSort.column) {
                     const sortFunction = (a, b) => {
-                        const valA = a[currentSort.column];
-                        const valB = b[currentSort.column];
-                        if (valA < valB) return currentSort.ascending ? -1 : 1;
-                        if (valA > valB) return currentSort.ascending ? 1 : -1;
+                        let valA = a[currentSort.column];
+                        let valB = b[currentSort.column];
+
+                        // Try to parse as numbers for proper numeric sorting
+                        const numA = parseFloat(valA);
+                        const numB = parseFloat(valB);
+
+                        // If both values are valid numbers, compare numerically
+                        if (!isNaN(numA) && !isNaN(numB)) {
+                            if (numA < numB) return currentSort.ascending ? -1 : 1;
+                            if (numA > numB) return currentSort.ascending ? 1 : -1;
+                            return 0;
+                        }
+
+                        // Otherwise, compare as strings (case-insensitive)
+                        const strA = String(valA).toLowerCase();
+                        const strB = String(valB).toLowerCase();
+                        if (strA < strB) return currentSort.ascending ? -1 : 1;
+                        if (strA > strB) return currentSort.ascending ? 1 : -1;
                         return 0;
                     };
                     currentData.sort(sortFunction);
@@ -303,6 +322,10 @@
             } else {
                 savedUIState = null;
             }
+
+            editingHeaderIndex = null;
+            originalHeaderName = null;
+            pendingHeaderName = '';
 
             // Update current filename
             currentFilename = filename;
@@ -558,9 +581,25 @@
                     sortClass += currentSort.ascending ? ' sorted-asc' : ' sorted-desc';
                 }
                 const width = columnWidths[header] ? `style="width: ${columnWidths[header]}px;"` : '';
+                const isEditing = editingHeaderIndex === index;
+                const headerContent = isEditing
+                    ? `<input id="headerEditInput"
+                              class="header-edit-input"
+                              value="${escapeHtml(pendingHeaderName || header)}"
+                              oninput="handleHeaderInput(event)"
+                              onkeydown="handleHeaderKeyDown(event)"
+                              onblur="commitHeaderEdit()"
+                              aria-label="Edit column name" />`
+                    : `<span class="header-label"
+                            onclick="sortDataByHeaderIndex(${index})"
+                            ondblclick="startHeaderEdit(${index}); event.stopPropagation();"
+                            title="Click to sort • Double-click to rename">${escapeHtml(header)}</span>`;
+
                 headerRow += `<th class="${sortClass} resizable-header" ${width} data-column="${header}">
-                    <span onclick="sortData('${header}')">${header}</span>
-                    <div class="resize-handle" data-column="${header}"></div>
+                    <div class="header-cell">
+                        ${headerContent}
+                        <div class="resize-handle" data-column="${header}"></div>
+                    </div>
                 </th>`;
             });
             headerRow += '</tr>';
@@ -610,6 +649,16 @@
 
             const urlRegex = /(https?:\/\/[^\s]+)/g;
             return textStr.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function updateUIVisibility() {
@@ -678,6 +727,107 @@
                 ? `${(currentData.length / 1000).toFixed(1)}K`
                 : currentData.length;
             rowCountElement.textContent = `${formattedCount} rows`;
+        }
+
+        function sortDataByHeaderIndex(index) {
+            const header = currentHeaders?.[index];
+            if (!header) return;
+            sortData(header);
+        }
+
+        function startHeaderEdit(index) {
+            editingHeaderIndex = index;
+            originalHeaderName = currentHeaders[index];
+            pendingHeaderName = currentHeaders[index];
+            displayData(currentData);
+            // Defer focus until after render
+            setTimeout(() => {
+                const input = document.getElementById('headerEditInput');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 0);
+        }
+
+        function handleHeaderInput(event) {
+            pendingHeaderName = event.target.value;
+        }
+
+        function handleHeaderKeyDown(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitHeaderEdit();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelHeaderEdit();
+            }
+        }
+
+        function renameColumns(oldName, newName) {
+            const renameRow = (row) => {
+                const newRow = { ...row };
+                newRow[newName] = newRow[oldName];
+                delete newRow[oldName];
+                return newRow;
+            };
+
+            currentData = currentData.map(renameRow);
+            allData = allData.map(renameRow);
+
+            if (unfilteredData.length > 0) {
+                unfilteredData = unfilteredData.map(renameRow);
+            }
+
+            if (columnWidths[oldName]) {
+                columnWidths[newName] = columnWidths[oldName];
+                delete columnWidths[oldName];
+            }
+
+            if (currentSort.column === oldName) {
+                currentSort.column = newName;
+            }
+        }
+
+        function commitHeaderEdit() {
+            if (editingHeaderIndex === null) return;
+
+            const newName = (pendingHeaderName || '').trim();
+            const oldName = originalHeaderName;
+            const headerIndex = editingHeaderIndex;
+
+            editingHeaderIndex = null;
+            originalHeaderName = null;
+            pendingHeaderName = '';
+
+            // If unchanged or empty, just re-render
+            if (!newName || newName === oldName) {
+                displayData(currentData);
+                return;
+            }
+
+            // Prevent duplicate header names
+            const duplicateIndex = currentHeaders.findIndex((h, idx) => idx !== headerIndex && h === newName);
+            if (duplicateIndex !== -1) {
+                alert('A column with that name already exists. Please choose another.');
+                displayData(currentData);
+                return;
+            }
+
+            currentHeaders[headerIndex] = newName;
+            renameColumns(oldName, newName);
+
+            hasCustomHeaders = true;
+            markAsAdjusted();
+            displayData(currentData);
+            triggerAutoSave();
+        }
+
+        function cancelHeaderEdit() {
+            editingHeaderIndex = null;
+            originalHeaderName = null;
+            pendingHeaderName = '';
+            displayData(currentData);
         }
 
         function markAsAdjusted() {
@@ -1020,11 +1170,25 @@
 
             // Sort function to be used for both arrays
             const sortFunction = (a, b) => {
-                const valA = a[column];
-                const valB = b[column];
+                let valA = a[column];
+                let valB = b[column];
 
-                if (valA < valB) return currentSort.ascending ? -1 : 1;
-                if (valA > valB) return currentSort.ascending ? 1 : -1;
+                // Try to parse as numbers for proper numeric sorting
+                const numA = parseFloat(valA);
+                const numB = parseFloat(valB);
+
+                // If both values are valid numbers, compare numerically
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    if (numA < numB) return currentSort.ascending ? -1 : 1;
+                    if (numA > numB) return currentSort.ascending ? 1 : -1;
+                    return 0;
+                }
+
+                // Otherwise, compare as strings (case-insensitive)
+                const strA = String(valA).toLowerCase();
+                const strB = String(valB).toLowerCase();
+                if (strA < strB) return currentSort.ascending ? -1 : 1;
+                if (strA > strB) return currentSort.ascending ? 1 : -1;
                 return 0;
             };
 
