@@ -427,6 +427,40 @@ strong, b {
     background: #ffcdd2;
 }
 
+.add-row-button {
+    padding: 5px 12px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #e8f5e9;
+    color: #333;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: background 0.2s ease;
+}
+
+.add-row-button:hover {
+    background: #c8e6c9;
+}
+
+.add-column-button {
+    padding: 5px 12px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #e3f2fd;
+    color: #333;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: background 0.2s ease;
+}
+
+.add-column-button:hover {
+    background: #bbdefb;
+}
+
 .add-header-button {
     padding: 5px 12px;
     border: 1px solid #ddd;
@@ -504,6 +538,28 @@ strong, b {
     background-color: #e8eaf6;
     font-weight: 600;
     font-family: 'Inter', sans-serif;
+}
+
+.saved-files-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.saved-files-table th.sortable:hover {
+    background-color: #dde3f3;
+}
+
+.saved-files-table .sort-indicator {
+    margin-left: 6px;
+    font-size: 10px;
+    opacity: 0.6;
+    display: inline-block;
+    width: 10px;
+    text-align: center;
+}
+
+.saved-files-table .sort-indicator.inactive {
+    visibility: hidden;
 }
 
 .saved-files-table tr:hover {

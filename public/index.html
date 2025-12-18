@@ -33,6 +33,8 @@
         <!-- Tab Navigation -->
         <div class="tab-container">
             <button class="delete-button" id="deleteBtn" onclick="showDeleteDialog()" style="display: none;" title="Delete rows or columns">−</button>
+            <button class="add-row-button" id="addRowBtn" onclick="addNewRow()" style="display: none;" title="Add new row">+ Row</button>
+            <button class="add-column-button" id="addColumnBtn" onclick="showAddColumnDialog()" style="display: none;" title="Add new column">+ Col</button>
             <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
             <span class="current-filename" id="currentFilename"></span>
             <button class="tab-button active" id="uploadTab" onclick="switchTab('upload')">Upload New</button>
@@ -106,6 +108,9 @@
         let editingHeaderIndex = null; // Track which header is being edited
         let pendingHeaderName = ''; // Current input value while editing
         let originalHeaderName = null; // Preserve original header for rename operations
+        let savedFilesData = []; // Cache saved files for sorting
+        let savedFilesSort = { column: 'lastModified', ascending: false }; // Default to newest first
+        let columnTypes = {}; // Track column types (text, number, checkbox)
 
         // Save current UI state
         function saveUIState() {
@@ -113,6 +118,7 @@
                 filter: currentFilter,
                 sort: { ...currentSort },
                 columnWidths: { ...columnWidths },
+                columnTypes: { ...columnTypes },
                 checkedRows: new Set(checkedRows),
                 showRankColumn: showRankColumn,
                 showCheckboxColumn: showCheckboxColumn,
@@ -136,10 +142,11 @@
             hasSignificantAdjustments = state.hasSignificantAdjustments;
             currentSavedFilename = state.currentSavedFilename;
 
-            // Restore column widths if headers match
+            // Restore column widths and types if headers match
             if (state.headers && currentHeaders &&
                 JSON.stringify(state.headers) === JSON.stringify(currentHeaders)) {
                 columnWidths = { ...state.columnWidths };
+                columnTypes = { ...state.columnTypes };
 
                 // Restore checked rows (they use the same ID system)
                 checkedRows = new Set(state.checkedRows);
@@ -148,6 +155,17 @@
                 currentSort = { ...state.sort };
                 if (currentSort.column) {
                     const sortFunction = (a, b) => {
+                        // Special handling for "Checked" column - sort by checkbox state
+                        if (currentSort.column === 'Checked') {
+                            const isAChecked = checkedRows.has(a.ID);
+                            const isBChecked = checkedRows.has(b.ID);
+
+                            if (isAChecked === isBChecked) return 0;
+                            if (isAChecked && !isBChecked) return currentSort.ascending ? -1 : 1;
+                            if (!isAChecked && isBChecked) return currentSort.ascending ? 1 : -1;
+                            return 0;
+                        }
+
                         let valA = a[currentSort.column];
                         let valB = b[currentSort.column];
 
@@ -327,6 +345,11 @@
             originalHeaderName = null;
             pendingHeaderName = '';
 
+            // Reset column types if not reloading
+            if (!isReload) {
+                columnTypes = {};
+            }
+
             // Update current filename
             currentFilename = filename;
 
@@ -336,8 +359,10 @@
                 filenameElement.textContent = filename;
             }
 
-            // Hide add header and delete buttons while processing
+            // Hide all action buttons while processing
             document.getElementById('addHeaderBtn').style.display = 'none';
+            document.getElementById('addRowBtn').style.display = 'none';
+            document.getElementById('addColumnBtn').style.display = 'none';
             document.getElementById('deleteBtn').style.display = 'none';
 
             // Show loading indicator
@@ -492,6 +517,20 @@
 
                         allData = [...currentData];
 
+                        // Auto-detect checkbox columns (only if not reloading with saved state)
+                        if (!isReload || !savedUIState || !savedUIState.columnTypes) {
+                            currentHeaders.forEach(header => {
+                                // Check if all non-empty values in this column are TRUE/FALSE
+                                const values = currentData.map(row => String(row[header]).toUpperCase().trim()).filter(v => v !== '');
+                                if (values.length > 0) {
+                                    const allBooleans = values.every(v => v === 'TRUE' || v === 'FALSE' || v === '1' || v === '0');
+                                    if (allBooleans) {
+                                        columnTypes[header] = 'checkbox';
+                                    }
+                                }
+                            });
+                        }
+
                         document.getElementById('loadingDetails').textContent =
                             `Rendering ${dataRowsFormatted} rows...`;
 
@@ -505,8 +544,10 @@
                             document.getElementById('tableContainer').style.display = 'block';
                             document.getElementById('optionsContainer').style.display = 'flex';
 
-                            // Show delete button whenever data is loaded
+                            // Show action buttons whenever data is loaded
                             document.getElementById('deleteBtn').style.display = 'block';
+                            document.getElementById('addRowBtn').style.display = 'block';
+                            document.getElementById('addColumnBtn').style.display = 'block';
 
                             // Show add header button if using default headers
                             if (!hasCustomHeaders) {
@@ -574,7 +615,13 @@
             let headerRow = '<tr>';
             if (showDragHandle) headerRow += '<th style="width: 40px;">⠿</th>';
             if (showRankColumn) headerRow += '<th>Rank</th>';
-            if (showCheckboxColumn) headerRow += '<th>Check</th>';
+            if (showCheckboxColumn) {
+                let sortClass = 'sortable';
+                if (currentSort.column === 'Checked') {
+                    sortClass += currentSort.ascending ? ' sorted-asc' : ' sorted-desc';
+                }
+                headerRow += `<th class="${sortClass}" onclick="sortData('Checked')" style="cursor: pointer; user-select: none;" title="Click to sort by checked status">Check</th>`;
+            }
             currentHeaders.forEach((header, index) => {
                 let sortClass = 'sortable';
                 if (currentSort.column === header) {
@@ -621,10 +668,17 @@
                     const isChecked = checkedRows.has(row.ID) ? 'checked' : '';
                     dataRow += `<td><input type="checkbox" ${isChecked} data-row-id="${row.ID}" data-row-index="${rowIndex}" onclick="handleCheckboxChange(${row.ID}, ${rowIndex}, this, event)"></td>`;
                 }
-                currentHeaders.forEach(header => {
+                currentHeaders.forEach((header, headerIndex) => {
                     const cellValue = row[header];
-                    const formattedValue = makeLinksClickable(cellValue);
-                    dataRow += `<td>${formattedValue}</td>`;
+
+                    // Check if this is a checkbox column
+                    if (columnTypes[header] === 'checkbox') {
+                        const isChecked = (String(cellValue).toUpperCase() === 'TRUE' || cellValue === '1' || cellValue === 1) ? 'checked' : '';
+                        dataRow += `<td><input type="checkbox" ${isChecked} onchange="handleCustomCheckboxChangeByIndex(${row.ID}, ${headerIndex}, this)"></td>`;
+                    } else {
+                        const formattedValue = makeLinksClickable(cellValue);
+                        dataRow += `<td>${formattedValue}</td>`;
+                    }
                 });
                 dataRow += '</tr>';
                 return dataRow;
@@ -784,6 +838,11 @@
                 delete columnWidths[oldName];
             }
 
+            if (columnTypes[oldName]) {
+                columnTypes[newName] = columnTypes[oldName];
+                delete columnTypes[oldName];
+            }
+
             if (currentSort.column === oldName) {
                 currentSort.column = newName;
             }
@@ -863,6 +922,37 @@
             showDragHandle = !showDragHandle;
             document.getElementById('toggleDragHandleLink').classList.toggle('active', showDragHandle);
             displayData(currentData);
+        }
+
+        function handleCustomCheckboxChangeByIndex(rowID, headerIndex, checkboxElem) {
+            const columnName = currentHeaders[headerIndex];
+            if (!columnName) return;
+
+            // Update the value in the data
+            const newValue = checkboxElem.checked ? 'TRUE' : 'FALSE';
+
+            // Find and update the row in currentData
+            const currentRow = currentData.find(row => row.ID === rowID);
+            if (currentRow) {
+                currentRow[columnName] = newValue;
+            }
+
+            // Find and update the row in allData
+            const allRow = allData.find(row => row.ID === rowID);
+            if (allRow) {
+                allRow[columnName] = newValue;
+            }
+
+            // Update unfiltered data if it exists
+            if (unfilteredData.length > 0) {
+                const unfilteredRow = unfilteredData.find(row => row.ID === rowID);
+                if (unfilteredRow) {
+                    unfilteredRow[columnName] = newValue;
+                }
+            }
+
+            markAsAdjusted();
+            triggerAutoSave();
         }
 
         function handleCheckboxChange(rowID, rowIndex, checkboxElem, event) {
@@ -1170,6 +1260,17 @@
 
             // Sort function to be used for both arrays
             const sortFunction = (a, b) => {
+                // Special handling for "Checked" column - sort by checkbox state
+                if (column === 'Checked') {
+                    const isAChecked = checkedRows.has(a.ID);
+                    const isBChecked = checkedRows.has(b.ID);
+
+                    if (isAChecked === isBChecked) return 0;
+                    if (isAChecked && !isBChecked) return currentSort.ascending ? -1 : 1;
+                    if (!isAChecked && isBChecked) return currentSort.ascending ? 1 : -1;
+                    return 0;
+                }
+
                 let valA = a[column];
                 let valB = b[column];
 
@@ -1295,9 +1396,11 @@
                 document.getElementById('savedTab').classList.remove('active');
                 document.getElementById('uploadSection').style.display = 'block';
                 document.getElementById('savedFilesSection').style.display = 'none';
-                // Show delete button if we have data loaded
+                // Show action buttons if we have data loaded
                 if (currentData.length > 0) {
                     document.getElementById('deleteBtn').style.display = 'block';
+                    document.getElementById('addRowBtn').style.display = 'block';
+                    document.getElementById('addColumnBtn').style.display = 'block';
                 }
                 // Show add header button if using default headers
                 if (!hasCustomHeaders && currentData.length > 0) {
@@ -1319,8 +1422,10 @@
                     document.getElementById('savedTab').classList.add('active');
                     document.getElementById('uploadSection').style.display = 'none';
                     document.getElementById('savedFilesSection').style.display = 'block';
-                    // Hide buttons when viewing saved files
+                    // Hide all action buttons when viewing saved files
                     document.getElementById('deleteBtn').style.display = 'none';
+                    document.getElementById('addRowBtn').style.display = 'none';
+                    document.getElementById('addColumnBtn').style.display = 'none';
                     document.getElementById('addHeaderBtn').style.display = 'none';
                     // Load saved files when switching to this tab
                     loadSavedFiles();
@@ -1347,55 +1452,112 @@
                     return;
                 }
 
-                if (data.files.length === 0) {
+                savedFilesData = data.files || [];
+
+                if (savedFilesData.length === 0) {
                     filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
                     return;
                 }
 
-                // Build table
-                let tableHTML = `
-                    <table class="saved-files-table">
-                        <thead>
-                            <tr>
-                                <th>Filename</th>
-                                <th>Size</th>
-                                <th>Last Modified</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-
-                data.files.forEach(file => {
-                    const size = formatFileSize(file.size);
-                    const date = formatDate(file.lastModified);
-                    tableHTML += `
-                        <tr>
-                            <td class="filename-cell">
-                                <span class="filename-display" id="filename-${file.filename}">${file.filename}</span>
-                                <input type="text" class="filename-input" id="input-${file.filename}"
-                                       value="${file.filename}" style="display: none;">
-                            </td>
-                            <td>${size}</td>
-                            <td>${date}</td>
-                            <td>
-                                <div class="file-actions">
-                                    <button class="file-action-btn" onclick="loadSavedFile('${file.filename}')">Load</button>
-                                    <button class="file-action-btn" onclick="startRename('${file.filename}')">Rename</button>
-                                    <button class="file-action-btn delete" onclick="deleteSavedFile('${file.filename}')">Delete</button>
-                                </div>
-                            </td>
-                        </tr>
-                    `;
-                });
-
-                tableHTML += '</tbody></table>';
-                filesList.innerHTML = tableHTML;
+                renderSavedFilesTable(getSortedSavedFiles());
             } catch (error) {
                 console.error('Error loading saved files:', error);
                 loadingIndicator.style.display = 'none';
                 filesList.innerHTML = '<div class="empty-state">Error loading files</div>';
             }
+        }
+
+        function renderSavedFilesTable(files) {
+            const filesList = document.getElementById('savedFilesList');
+
+            if (!files || files.length === 0) {
+                filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
+                return;
+            }
+
+            const sortIndicator = (column) => {
+                const isActive = savedFilesSort.column === column;
+                const arrow = savedFilesSort.ascending ? '&#9650;' : '&#9660;';
+                const visibilityClass = isActive ? 'active' : 'inactive';
+                return `<span class="sort-indicator ${visibilityClass}">${isActive ? arrow : '&#9650;'}</span>`;
+            };
+
+            let tableHTML = `
+                <table class="saved-files-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" onclick="sortSavedFiles('filename')">Filename ${sortIndicator('filename')}</th>
+                            <th class="sortable" onclick="sortSavedFiles('size')">Size ${sortIndicator('size')}</th>
+                            <th class="sortable" onclick="sortSavedFiles('lastModified')">Last Modified ${sortIndicator('lastModified')}</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            files.forEach(file => {
+                const size = formatFileSize(file.size);
+                const date = formatDate(file.lastModified);
+                tableHTML += `
+                    <tr>
+                        <td class="filename-cell">
+                            <span class="filename-display" id="filename-${file.filename}">${file.filename}</span>
+                            <input type="text" class="filename-input" id="input-${file.filename}"
+                                   value="${file.filename}" style="display: none;">
+                        </td>
+                        <td>${size}</td>
+                        <td>${date}</td>
+                        <td>
+                            <div class="file-actions">
+                                <button class="file-action-btn" onclick="loadSavedFile('${file.filename}')">Load</button>
+                                <button class="file-action-btn" onclick="startRename('${file.filename}')">Rename</button>
+                                <button class="file-action-btn delete" onclick="deleteSavedFile('${file.filename}')">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += '</tbody></table>';
+            filesList.innerHTML = tableHTML;
+        }
+
+        function getSortedSavedFiles() {
+            const files = [...savedFilesData];
+            const { column, ascending } = savedFilesSort;
+
+            files.sort((a, b) => {
+                let result = 0;
+
+                if (column === 'filename') {
+                    result = a.filename.localeCompare(b.filename);
+                } else if (column === 'size') {
+                    result = (a.size || 0) - (b.size || 0);
+                } else if (column === 'lastModified') {
+                    result = new Date(a.lastModified) - new Date(b.lastModified);
+                }
+
+                return ascending ? result : -result;
+            });
+
+            return files;
+        }
+
+        function sortSavedFiles(column) {
+            if (!savedFilesData || savedFilesData.length === 0) {
+                return;
+            }
+
+            if (savedFilesSort.column === column) {
+                savedFilesSort.ascending = !savedFilesSort.ascending;
+            } else {
+                savedFilesSort = {
+                    column,
+                    ascending: column === 'lastModified' ? false : true
+                };
+            }
+
+            renderSavedFilesTable(getSortedSavedFiles());
         }
 
         async function loadSavedFile(filename) {
@@ -1821,6 +1983,11 @@
                 delete columnWidths[columnName];
             }
 
+            // Remove from column types
+            if (columnTypes[columnName]) {
+                delete columnTypes[columnName];
+            }
+
             // Mark as adjusted and trigger auto-save
             markAsAdjusted();
             displayData(currentData);
@@ -1955,6 +2122,187 @@
 
             // Redisplay the data with new headers
             displayData(currentData);
+        }
+
+        // Add new row functionality
+        function addNewRow() {
+            if (!currentHeaders || currentHeaders.length === 0) {
+                alert('No data loaded');
+                return;
+            }
+
+            // Find the highest ID in allData
+            let maxID = 0;
+            allData.forEach(row => {
+                if (row.ID > maxID) {
+                    maxID = row.ID;
+                }
+            });
+
+            // Create new empty row with next ID
+            const newRow = { ID: maxID + 1 };
+            currentHeaders.forEach(header => {
+                // Set default value based on column type
+                if (columnTypes[header] === 'checkbox') {
+                    newRow[header] = 'FALSE';
+                } else if (columnTypes[header] === 'number') {
+                    newRow[header] = '0';
+                } else {
+                    newRow[header] = '';
+                }
+            });
+
+            // Add to both current and all data
+            currentData.push(newRow);
+            allData.push(newRow);
+
+            // If we have unfiltered data, add there too
+            if (unfilteredData.length > 0) {
+                unfilteredData.push(newRow);
+            }
+
+            // Mark as adjusted and refresh display
+            markAsAdjusted();
+            displayData(currentData);
+            triggerAutoSave();
+        }
+
+        // Add new column functionality
+        function showAddColumnDialog() {
+            const overlay = document.createElement('div');
+            overlay.className = 'export-dialog-overlay';
+            overlay.id = 'addColumnOverlay';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'export-dialog';
+            dialog.innerHTML = `
+                <div style="margin-bottom: 10px; font-weight: bold;">Add New Column</div>
+                <div style="margin-bottom: 10px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600;">Column Name:</label>
+                    <input type="text" id="newColumnName" class="form-control" placeholder="Enter column name" style="margin-bottom: 10px;" />
+
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600;">Column Type:</label>
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="columnType" value="text" checked style="margin-right: 5px;">
+                        Text
+                    </label>
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="columnType" value="number" style="margin-right: 5px;">
+                        Number
+                    </label>
+                    <label style="display: block; cursor: pointer;">
+                        <input type="radio" name="columnType" value="checkbox" style="margin-right: 5px;">
+                        Checkbox
+                    </label>
+                </div>
+                <div class="export-dialog-buttons">
+                    <button class="file-action-btn" onclick="closeAddColumnDialog()">Cancel</button>
+                    <button class="file-action-btn" onclick="addColumn()" style="background: #e3f2fd; font-weight: bold;">Add Column</button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(dialog);
+
+            overlay.onclick = closeAddColumnDialog;
+
+            // Focus the input field
+            setTimeout(() => {
+                const input = document.getElementById('newColumnName');
+                if (input) {
+                    input.focus();
+                }
+            }, 100);
+
+            // Allow Enter key to submit
+            const input = document.getElementById('newColumnName');
+            if (input) {
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addColumn();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeAddColumnDialog();
+                    }
+                };
+            }
+        }
+
+        function closeAddColumnDialog() {
+            const overlay = document.getElementById('addColumnOverlay');
+            const dialogs = document.querySelectorAll('.export-dialog');
+
+            if (overlay) overlay.remove();
+            dialogs.forEach(d => {
+                if (d.textContent.includes('Add New Column')) {
+                    d.remove();
+                }
+            });
+        }
+
+        function addColumn() {
+            const columnName = document.getElementById('newColumnName').value.trim();
+            const columnType = document.querySelector('input[name="columnType"]:checked').value;
+
+            if (!columnName) {
+                alert('Please enter a column name');
+                return;
+            }
+
+            // Check if column name already exists
+            if (currentHeaders.includes(columnName)) {
+                alert('A column with that name already exists. Please choose another name.');
+                return;
+            }
+
+            closeAddColumnDialog();
+
+            // Add new header
+            currentHeaders.push(columnName);
+
+            // Store the column type
+            columnTypes[columnName] = columnType;
+
+            // Determine default value based on type
+            let defaultValue = '';
+            if (columnType === 'number') {
+                defaultValue = '0';
+            } else if (columnType === 'checkbox') {
+                defaultValue = 'FALSE';
+            }
+
+            // Add the new column to all rows in currentData
+            currentData = currentData.map(row => {
+                return {
+                    ...row,
+                    [columnName]: defaultValue
+                };
+            });
+
+            // Add the new column to all rows in allData
+            allData = allData.map(row => {
+                return {
+                    ...row,
+                    [columnName]: defaultValue
+                };
+            });
+
+            // Add to unfiltered data if it exists
+            if (unfilteredData.length > 0) {
+                unfilteredData = unfilteredData.map(row => {
+                    return {
+                        ...row,
+                        [columnName]: defaultValue
+                    };
+                });
+            }
+
+            // Mark as adjusted and refresh display
+            hasCustomHeaders = true;
+            markAsAdjusted();
+            displayData(currentData);
+            triggerAutoSave();
         }
     </script>
 </body>
