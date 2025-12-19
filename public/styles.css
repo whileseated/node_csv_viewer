@@ -50,6 +50,11 @@ strong, b {
     background: #f1f8e9;
 }
 
+.bulk-actions-container a.active {
+    background-color: #f1f8e9;
+    border-color: #ddd;
+}
+
 .options-container a {
     text-decoration: none;
     color: #333;

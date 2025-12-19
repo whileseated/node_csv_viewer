@@ -16,17 +16,16 @@
         <a href="#" id="showAllLink" onclick="showAllRows()" style="display: none;">Show All</a>
         <input type="text" id="filterInput" class="filter-input" placeholder="Filter rows..." oninput="filterRows()" />
         <a href="#" id="toggleRankColumnLink" onclick="toggleRankColumn()">Rank</a>
-        <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
-        <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Checks</a>
         <a href="#" id="toggleDragHandleLink" onclick="toggleDragHandle()">Drag Handle</a>
         <a href="#" id="saveLink" onclick="saveCSV()" style="display: none;">Save</a>
         <a href="#" id="exportCSVLink" onclick="exportCSV()" style="display: none;">Export</a>
     </div>
 
     <div class="bulk-actions-container" id="bulkActionsContainer" style="display: none;">
-        <a href="#" id="checkAllLink" onclick="checkAll()">Check All</a>
-        <a href="#" id="checkNoneLink" onclick="checkNone()">Check None</a>
-        <a href="#" id="deleteCheckedLink" onclick="deleteCheckedRows()">Delete Checked</a>
+        <a href="#" id="toggleCheckmarkColumnLink" onclick="toggleCheckmarkColumn()">Checkmark</a>
+        <a href="#" id="showCheckedRowsLink" onclick="toggleCheckedRows()" style="display: none;">Show Checks</a>
+        <a href="#" id="checkAllNoneLink" onclick="toggleCheckAllNone()" style="display: none;">Check All</a>
+        <a href="#" id="deleteCheckedLink" onclick="deleteCheckedRows()" style="display: none;">Delete Checked</a>
     </div>
 
     <div class="container mt-3">
@@ -37,7 +36,6 @@
             <button class="add-column-button" id="addColumnBtn" onclick="showAddColumnDialog()" style="display: none;" title="Add new column">+ Col</button>
             <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
             <span class="current-filename" id="currentFilename"></span>
-            <button class="tab-button active" id="uploadTab" onclick="switchTab('upload')">Upload New</button>
             <button class="tab-button" id="savedTab" onclick="switchTab('saved')">Saved Files</button>
         </div>
 
@@ -211,6 +209,14 @@
                 document.getElementById('toggleCheckmarkColumnLink').classList.toggle('active', showCheckboxColumn);
                 document.getElementById('toggleDragHandleLink').classList.toggle('active', showDragHandle);
                 document.getElementById('showCheckedRowsLink').classList.toggle('active', showCheckedRows);
+
+                // Show bulk actions container if checkboxes were enabled
+                const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+                if (showCheckboxColumn) {
+                    bulkActionsContainer.style.display = 'flex';
+                } else {
+                    bulkActionsContainer.style.display = 'none';
+                }
 
                 // Apply checked rows filter if it was active
                 if (showCheckedRows) {
@@ -490,10 +496,18 @@
 
                             // Enable checkbox column
                             showCheckboxColumn = true;
+                            // Show bulk actions container
+                            document.getElementById('bulkActionsContainer').style.display = 'flex';
+                            // Mark checkmark button as active
+                            document.getElementById('toggleCheckmarkColumnLink').classList.add('active');
                         } else if (!isReload) {
                             // No "Checked" column and not a reload - clear checked rows and reset checkbox column
                             checkedRows.clear();
                             showCheckboxColumn = false;
+                            // Hide bulk actions container
+                            document.getElementById('bulkActionsContainer').style.display = 'none';
+                            // Mark checkmark button as inactive
+                            document.getElementById('toggleCheckmarkColumnLink').classList.remove('active');
                         }
 
                         // If there's a "Rank" column, remove it and enable rank column
@@ -716,20 +730,32 @@
         }
 
         function updateUIVisibility() {
-            // Show "Show Only Checked Rows" only when checkboxes are enabled
-            const showCheckedRowsLink = document.getElementById('showCheckedRowsLink');
-            if (showCheckboxColumn) {
-                showCheckedRowsLink.style.display = 'inline-block';
-            } else {
-                showCheckedRowsLink.style.display = 'none';
-            }
-
-            // Show bulk actions (Check All, Check None) only when checkboxes are enabled
+            // Show bulk actions container and checkbox-related buttons only when checkboxes are enabled
             const bulkActionsContainer = document.getElementById('bulkActionsContainer');
+            const showCheckedRowsLink = document.getElementById('showCheckedRowsLink');
+            const checkAllNoneLink = document.getElementById('checkAllNoneLink');
+            const deleteCheckedLink = document.getElementById('deleteCheckedLink');
+
             if (showCheckboxColumn) {
+                // Show the entire bulk actions row
                 bulkActionsContainer.style.display = 'flex';
+
+                // Show individual checkbox-related buttons
+                showCheckedRowsLink.style.display = 'inline-block';
+                checkAllNoneLink.style.display = 'inline-block';
+                deleteCheckedLink.style.display = 'inline-block';
+
+                // Update Check All/None button text based on current state
+                const allVisibleChecked = currentData.length > 0 && currentData.every(row => checkedRows.has(row.ID));
+                checkAllNoneLink.textContent = allVisibleChecked ? 'Check None' : 'Check All';
             } else {
+                // Hide the entire bulk actions row
                 bulkActionsContainer.style.display = 'none';
+
+                // Hide individual checkbox-related buttons
+                showCheckedRowsLink.style.display = 'none';
+                checkAllNoneLink.style.display = 'none';
+                deleteCheckedLink.style.display = 'none';
             }
 
             // Show save button only when file is from saved files
@@ -909,12 +935,17 @@
         function toggleCheckmarkColumn() {
             showCheckboxColumn = !showCheckboxColumn;
             document.getElementById('toggleCheckmarkColumnLink').classList.toggle('active', showCheckboxColumn);
+
+            // Show/hide the bulk actions container
+            const bulkActionsContainer = document.getElementById('bulkActionsContainer');
             if (showCheckboxColumn) {
+                bulkActionsContainer.style.display = 'flex';
                 markAsAdjusted();
             } else {
-                // Still update visibility when toggling off
-                updateUIVisibility();
+                bulkActionsContainer.style.display = 'none';
             }
+
+            updateUIVisibility();
             displayData(currentData);
         }
 
@@ -980,13 +1011,13 @@
 
                 // Refresh the display to show all checked boxes
                 displayData(currentData);
-                updateCheckedRowsButtonText();
+                updateUIVisibility();
             } else {
                 // Normal single checkbox toggle
                 if (checkboxElem.checked) {
                     checkedRows.add(rowID);
                     // Update button text immediately
-                    updateCheckedRowsButtonText();
+                    updateUIVisibility();
                 } else {
                     checkedRows.delete(rowID);
 
@@ -999,12 +1030,12 @@
                             // Update currentData array to match
                             currentData = currentData.filter(row => row.ID !== rowID);
                             // Update counters AFTER removing from checkedRows and currentData
-                            updateCheckedRowsButtonText();
+                            updateUIVisibility();
                             updateRowCount();
                         }
                     } else {
                         // Not in "Show Checks" mode, just update button text
-                        updateCheckedRowsButtonText();
+                        updateUIVisibility();
                     }
                 }
             }
@@ -1013,19 +1044,40 @@
             triggerAutoSave();
         }
 
+        function toggleCheckAllNone() {
+            // Check if all visible rows are checked
+            const allVisibleChecked = currentData.every(row => checkedRows.has(row.ID));
+
+            if (allVisibleChecked) {
+                // Uncheck all visible rows
+                currentData.forEach(row => {
+                    checkedRows.delete(row.ID);
+                });
+            } else {
+                // Check all visible rows
+                currentData.forEach(row => {
+                    checkedRows.add(row.ID);
+                });
+            }
+
+            displayData(currentData);
+            updateUIVisibility();
+            triggerAutoSave();
+        }
+
         function checkAll() {
             currentData.forEach(row => {
                 checkedRows.add(row.ID);
             });
             displayData(currentData);
-            updateCheckedRowsButtonText();
+            updateUIVisibility();
             triggerAutoSave();
         }
 
         function checkNone() {
             checkedRows.clear();
             displayData(currentData);
-            updateCheckedRowsButtonText();
+            updateUIVisibility();
             triggerAutoSave();
         }
 
@@ -1392,7 +1444,6 @@
         // Tab switching functionality
         function switchTab(tab) {
             if (tab === 'upload') {
-                document.getElementById('uploadTab').classList.add('active');
                 document.getElementById('savedTab').classList.remove('active');
                 document.getElementById('uploadSection').style.display = 'block';
                 document.getElementById('savedFilesSection').style.display = 'none';
@@ -1418,7 +1469,6 @@
                     document.getElementById('savedFilesSection').style.display = 'none';
                 } else {
                     // Show saved files
-                    document.getElementById('uploadTab').classList.remove('active');
                     document.getElementById('savedTab').classList.add('active');
                     document.getElementById('uploadSection').style.display = 'none';
                     document.getElementById('savedFilesSection').style.display = 'block';
