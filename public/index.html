@@ -34,7 +34,7 @@
             <button class="delete-button" id="deleteBtn" onclick="showDeleteDialog()" style="display: none;" title="Delete rows or columns">−</button>
             <button class="add-row-button" id="addRowBtn" onclick="addNewRow()" style="display: none;" title="Add new row">+ Row</button>
             <button class="add-column-button" id="addColumnBtn" onclick="showAddColumnDialog()" style="display: none;" title="Add new column">+ Col</button>
-            <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+</button>
+            <button class="add-header-button" id="addHeaderBtn" onclick="showAddHeaderDialog()" style="display: none;" title="Change headers">+/- head</button>
             <span class="current-filename" id="currentFilename"></span>
             <button class="tab-button" id="savedTab" onclick="switchTab('saved')">Saved Files</button>
         </div>
@@ -101,6 +101,8 @@
         let currentFilter = ''; // Track current filter text
         let currentSavedFilename = null; // Track currently loaded saved file for auto-save
         let autoSaveTimeout = null; // Debounce timer for auto-save
+        let selectedRowIDs = new Set(); // Track currently selected rows for deletion
+        let lastSelectedRowIndex = null; // Track last selected row for shift-click range selection
         let currentFilename = null; // Track current filename to detect reloads
         let savedUIState = null; // Store UI state for file reloads
         let editingHeaderIndex = null; // Track which header is being edited
@@ -351,9 +353,11 @@
             originalHeaderName = null;
             pendingHeaderName = '';
 
-            // Reset column types if not reloading
+            // Reset column types and selected rows if not reloading
             if (!isReload) {
                 columnTypes = {};
+                selectedRowIDs.clear();
+                lastSelectedRowIndex = null;
             }
 
             // Update current filename
@@ -672,7 +676,8 @@
             // Create the data rows with drag-and-drop functionality
             // Use array join instead of innerHTML concatenation for better performance
             const rows = data.map((row, rowIndex) => {
-                let dataRow = `<tr ondragover="handleDragOver(event)" ondrop="handleDrop(event, ${rowIndex})">`;
+                const isSelected = selectedRowIDs.has(row.ID) ? ' selected-row' : '';
+                let dataRow = `<tr class="${isSelected}" data-row-id="${row.ID}" onclick="handleRowClick(${row.ID}, ${rowIndex}, event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event, ${rowIndex})">`;
 
                 if (showDragHandle) {
                     dataRow += `<td class="drag-handle" draggable="true" ondragstart="handleDragStart(event, ${rowIndex})" style="cursor: grab; text-align: center;">⠿</td>`;
@@ -984,6 +989,47 @@
 
             markAsAdjusted();
             triggerAutoSave();
+        }
+
+        function handleRowClick(rowID, rowIndex, event) {
+            // Don't select row if clicking on a checkbox, input, or link
+            const target = event.target;
+            if (target.tagName === 'INPUT' || target.tagName === 'A' || target.closest('.drag-handle')) {
+                return;
+            }
+
+            // Handle shift-click range selection
+            if (event.shiftKey && lastSelectedRowIndex !== null && lastSelectedRowIndex !== rowIndex) {
+                const start = Math.min(lastSelectedRowIndex, rowIndex);
+                const end = Math.max(lastSelectedRowIndex, rowIndex);
+
+                // Check if the clicked row is already selected to determine whether to select or deselect the range
+                const shouldSelect = !selectedRowIDs.has(rowID);
+
+                // Select or deselect all rows in the range
+                for (let i = start; i <= end; i++) {
+                    const currentRow = currentData[i];
+                    if (currentRow) {
+                        if (shouldSelect) {
+                            selectedRowIDs.add(currentRow.ID);
+                        } else {
+                            selectedRowIDs.delete(currentRow.ID);
+                        }
+                    }
+                }
+            } else {
+                // Normal single row toggle
+                if (selectedRowIDs.has(rowID)) {
+                    selectedRowIDs.delete(rowID); // Deselect if clicking the same row
+                } else {
+                    selectedRowIDs.add(rowID); // Select new row
+                }
+            }
+
+            lastSelectedRowIndex = rowIndex;
+
+            // Re-render to show selection
+            displayData(currentData);
         }
 
         function handleCheckboxChange(rowID, rowIndex, checkboxElem, event) {
@@ -1908,17 +1954,42 @@
 
             const dialog = document.createElement('div');
             dialog.className = 'export-dialog';
+
+            // Build options based on what's available
+            let optionsHTML = '';
+
+            // Selected rows option
+            if (selectedRowIDs.size > 0) {
+                const selectedCount = selectedRowIDs.size;
+                const rowLabel = selectedCount === 1 ? 'row' : 'rows';
+                optionsHTML += `
+                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                        <input type="radio" name="deleteType" value="selectedRow" checked style="margin-right: 5px;">
+                        Delete ${selectedCount} selected ${rowLabel}
+                    </label>
+                `;
+            }
+
+            // Checked rows option
+            optionsHTML += `
+                <label style="display: block; margin-bottom: 5px; cursor: pointer;">
+                    <input type="radio" name="deleteType" value="rows" ${selectedRowIDs.size === 0 ? 'checked' : ''} style="margin-right: 5px;">
+                    Delete checked rows
+                </label>
+            `;
+
+            // Column option
+            optionsHTML += `
+                <label style="display: block; cursor: pointer;">
+                    <input type="radio" name="deleteType" value="columns" style="margin-right: 5px;">
+                    Delete a column
+                </label>
+            `;
+
             dialog.innerHTML = `
                 <div style="margin-bottom: 10px; font-weight: bold;">Delete Rows or Columns</div>
                 <div style="margin-bottom: 10px;">
-                    <label style="display: block; margin-bottom: 5px; cursor: pointer;">
-                        <input type="radio" name="deleteType" value="rows" checked style="margin-right: 5px;">
-                        Delete checked rows
-                    </label>
-                    <label style="display: block; cursor: pointer;">
-                        <input type="radio" name="deleteType" value="columns" style="margin-right: 5px;">
-                        Delete a column
-                    </label>
+                    ${optionsHTML}
                 </div>
                 <div class="export-dialog-buttons">
                     <button class="file-action-btn" onclick="closeDeleteDialog()">Cancel</button>
@@ -1949,11 +2020,50 @@
 
             closeDeleteDialog();
 
-            if (deleteType === 'rows') {
+            if (deleteType === 'selectedRow') {
+                deleteSelectedRow();
+            } else if (deleteType === 'rows') {
                 deleteCheckedRows();
             } else if (deleteType === 'columns') {
                 showColumnSelectionDialog();
             }
+        }
+
+        function deleteSelectedRow() {
+            if (selectedRowIDs.size === 0) {
+                alert('No rows are selected');
+                return;
+            }
+
+            const count = selectedRowIDs.size;
+            const rowLabel = count === 1 ? 'row' : 'rows';
+            if (!confirm(`Are you sure you want to delete ${count} selected ${rowLabel}? This cannot be undone.`)) {
+                return;
+            }
+
+            // Remove selected rows from both currentData and allData
+            currentData = currentData.filter(row => !selectedRowIDs.has(row.ID));
+            allData = allData.filter(row => !selectedRowIDs.has(row.ID));
+
+            // Also remove from unfilteredData if it exists
+            if (unfilteredData.length > 0) {
+                unfilteredData = unfilteredData.filter(row => !selectedRowIDs.has(row.ID));
+            }
+
+            // Remove from checked rows if any were checked
+            selectedRowIDs.forEach(id => {
+                checkedRows.delete(id);
+            });
+
+            // Clear selection
+            selectedRowIDs.clear();
+            lastSelectedRowIndex = null;
+
+            // Re-display data
+            displayData(currentData);
+            updateUIVisibility();
+            markAsAdjusted();
+            triggerAutoSave();
         }
 
         function showColumnSelectionDialog() {
