@@ -111,6 +111,9 @@
         let savedFilesData = []; // Cache saved files for sorting
         let savedFilesSort = { column: 'lastModified', ascending: false }; // Default to newest first
         let columnTypes = {}; // Track column types (text, number, checkbox)
+        let draggedHeaderIndex = null; // Track which column header is being dragged
+        let isColumnDragging = false; // Track drag activity to avoid accidental clicks
+        let columnDragJustEnded = false; // Prevent click after drag end
 
         // Save current UI state
         function saveUIState() {
@@ -656,11 +659,14 @@
                               onblur="commitHeaderEdit()"
                               aria-label="Edit column name" />`
                     : `<span class="header-label"
-                            onclick="sortDataByHeaderIndex(${index})"
+                            draggable="true"
+                            onclick="handleHeaderLabelClick(event, ${index})"
+                            ondragstart="handleColumnDragStart(event, ${index})"
+                            ondragend="handleColumnDragEnd(event)"
                             ondblclick="startHeaderEdit(${index}); event.stopPropagation();"
-                            title="Click to sort • Double-click to rename">${escapeHtml(header)}</span>`;
+                            title="Click to sort • Double-click to rename • Drag to reorder">${escapeHtml(header)}</span>`;
 
-                headerRow += `<th class="${sortClass} resizable-header" ${width} data-column="${header}">
+                headerRow += `<th class="${sortClass} resizable-header" ${width} data-column="${header}" data-header-index="${index}">
                     <div class="header-cell">
                         ${headerContent}
                         <div class="resize-handle" data-column="${header}"></div>
@@ -672,6 +678,7 @@
 
             // Attach resize event listeners
             attachResizeListeners();
+            attachColumnDragListeners();
 
             // Create the data rows with drag-and-drop functionality
             // Use array join instead of innerHTML concatenation for better performance
@@ -694,6 +701,9 @@
                     if (columnTypes[header] === 'checkbox') {
                         const isChecked = (String(cellValue).toUpperCase() === 'TRUE' || cellValue === '1' || cellValue === 1) ? 'checked' : '';
                         dataRow += `<td><input type="checkbox" ${isChecked} onchange="handleCustomCheckboxChangeByIndex(${row.ID}, ${headerIndex}, this)"></td>`;
+                    } else if (columnTypes[header] === 'number') {
+                        const numericValue = cellValue !== null && cellValue !== undefined ? cellValue : '';
+                        dataRow += `<td><input type="number" class="number-input" value="${escapeHtml(numericValue)}" step="any" inputmode="decimal" oninput="handleNumberInputChange(${row.ID}, ${headerIndex}, this)"></td>`;
                     } else {
                         const formattedValue = makeLinksClickable(cellValue);
                         dataRow += `<td>${formattedValue}</td>`;
@@ -991,6 +1001,29 @@
             triggerAutoSave();
         }
 
+        function handleNumberInputChange(rowID, headerIndex, inputElem) {
+            const columnName = currentHeaders[headerIndex];
+            if (!columnName) return;
+
+            const newValue = inputElem.value;
+
+            const updateRowValue = (row) => {
+                if (row) {
+                    row[columnName] = newValue;
+                }
+            };
+
+            updateRowValue(currentData.find(row => row.ID === rowID));
+            updateRowValue(allData.find(row => row.ID === rowID));
+
+            if (unfilteredData.length > 0) {
+                updateRowValue(unfilteredData.find(row => row.ID === rowID));
+            }
+
+            markAsAdjusted();
+            triggerAutoSave();
+        }
+
         function handleRowClick(rowID, rowIndex, event) {
             // Don't select row if clicking on a checkbox, input, or link
             const target = event.target;
@@ -1210,10 +1243,111 @@
             if (isResizing) {
                 isResizing = false;
                 currentResizeColumn = null;
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+
+        // Column reordering functionality
+        function attachColumnDragListeners() {
+            const headerCells = document.querySelectorAll('.table-header th.resizable-header');
+
+            headerCells.forEach((th) => {
+                th.addEventListener('dragover', handleColumnDragOver);
+                th.addEventListener('dragleave', handleColumnDragLeave);
+                th.addEventListener('drop', handleColumnDrop);
+            });
+        }
+
+        function handleColumnDragStart(event, index) {
+            draggedHeaderIndex = index;
+            isColumnDragging = true;
+            columnDragJustEnded = false;
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(index));
+            event.stopPropagation();
+
+            const th = event.target.closest('th');
+            if (th) {
+                th.classList.add('dragging-column');
             }
-        });
+        }
+
+        function handleColumnDragEnd(event) {
+            const th = event.target.closest('th');
+            if (th) {
+                th.classList.remove('dragging-column');
+            }
+            clearColumnDropTargets();
+            setTimeout(() => {
+                columnDragJustEnded = false;
+            }, 0);
+            isColumnDragging = false;
+            draggedHeaderIndex = null;
+        }
+
+        function handleColumnDragOver(event) {
+            if (draggedHeaderIndex === null) return;
+            event.preventDefault();
+
+            const th = event.currentTarget;
+            th.classList.add('column-drop-target');
+        }
+
+        function handleColumnDragLeave(event) {
+            const th = event.currentTarget;
+            th.classList.remove('column-drop-target');
+        }
+
+        function handleColumnDrop(event) {
+            if (draggedHeaderIndex === null) return;
+            event.preventDefault();
+
+            const targetIndex = parseInt(event.currentTarget.getAttribute('data-header-index'), 10);
+            if (Number.isNaN(targetIndex)) {
+                clearColumnDropTargets();
+                return;
+            }
+
+            if (targetIndex === draggedHeaderIndex) {
+                clearColumnDropTargets();
+                return;
+            }
+
+            reorderColumns(draggedHeaderIndex, targetIndex);
+        }
+
+        function clearColumnDropTargets() {
+            const headers = document.querySelectorAll('.table-header th');
+            headers.forEach(th => {
+                th.classList.remove('column-drop-target');
+                th.classList.remove('dragging-column');
+            });
+        }
+
+        function reorderColumns(fromIndex, toIndex) {
+            if (fromIndex < 0 || toIndex < 0 || fromIndex >= currentHeaders.length || toIndex >= currentHeaders.length) {
+                clearColumnDropTargets();
+                return;
+            }
+
+            const [moved] = currentHeaders.splice(fromIndex, 1);
+            currentHeaders.splice(toIndex, 0, moved);
+
+            clearColumnDropTargets();
+            draggedHeaderIndex = null;
+            markAsAdjusted();
+            displayData(currentData);
+            triggerAutoSave();
+        }
+
+        function handleHeaderLabelClick(event, index) {
+            if (isColumnDragging || columnDragJustEnded) {
+                event.preventDefault();
+                return;
+            }
+            sortDataByHeaderIndex(index);
+        }
 
         function toggleCheckedRows() {
             showCheckedRows = !showCheckedRows;

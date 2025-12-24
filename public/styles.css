@@ -167,6 +167,23 @@ strong, b {
     border-bottom: 1px solid #ddd;
 }
 
+.number-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: 'Source Code Pro', monospace;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #fff;
+}
+
+.number-input:focus {
+    border-color: #999;
+    outline: none;
+    background: #f9f9f9;
+}
+
 .table thead th {
     background-color: #e8eaf6;
     color: #333;
@@ -184,6 +201,14 @@ strong, b {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+th.dragging-column {
+    opacity: 0.6;
+}
+
+th.column-drop-target {
+    outline: 2px dashed #9fa8da;
 }
 
 .header-label {
