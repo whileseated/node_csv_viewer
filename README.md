@@ -125,7 +125,7 @@ This will:
    - First row automatically becomes headers (no alert interruption)
 4. **Optional:** Click the pale green "+" button if you need to change headers
    - Choose "Use next row as headers" to shift data up one row
-   - Or enter custom headers manually
+   - Or enter custom headers manually (optionally keep the first row as data)
 5. Use the toolbar options to customize your view:
    - **Row count badge** - Displays current visible row count (e.g., "1.2K rows")
    - **Auto-save indicator** - Shows "Saving..." / "Saved" for files from saved files
@@ -141,6 +141,7 @@ This will:
    - **Click column headers** to sort (click again to reverse, visual indicators show sort direction)
    - **Drag column borders** to resize for better readability (minimum 50px width)
    - **Column widths persist** on file reload if headers match
+   - **Click a text cell** to edit; Enter saves, Tab moves, Escape cancels
 7. **Checkbox operations** (when enabled):
    - **Click checkbox** to check/uncheck individual rows (triggers auto-save)
    - **Shift+Click** to select a range of rows

@@ -54,6 +54,17 @@
         <!-- Saved Files Section -->
         <div id="savedFilesSection" class="saved-files-section" style="display: none;">
             <div class="saved-files-container">
+                <div class="saved-files-toolbar">
+                    <div class="saved-files-search">
+                        <input type="text" id="savedFilesSearchInput" class="saved-files-search-input"
+                               placeholder="Search saved file contents..." aria-label="Search saved file contents"
+                               oninput="handleSavedFilesSearch()">
+                        <button class="saved-files-clear-btn" id="savedFilesSearchClear" onclick="clearSavedFilesSearch()" style="display: none;">
+                            Clear
+                        </button>
+                    </div>
+                    <div class="saved-files-search-status" id="savedFilesSearchStatus" style="display: none;"></div>
+                </div>
                 <div id="savedFilesContent">
                     <div class="loading-indicator" id="savedFilesLoading" style="display: none;">
                         <div class="loading-spinner"></div>
@@ -108,8 +119,13 @@
         let editingHeaderIndex = null; // Track which header is being edited
         let pendingHeaderName = ''; // Current input value while editing
         let originalHeaderName = null; // Preserve original header for rename operations
+        let editingCell = null; // Track active inline text edit
         let savedFilesData = []; // Cache saved files for sorting
         let savedFilesSort = { column: 'lastModified', ascending: false }; // Default to newest first
+        let savedFilesSearchQuery = '';
+        let savedFilesSearchResults = null;
+        let savedFilesSearchTimeout = null;
+        let savedFilesSearchToken = 0;
         let columnTypes = {}; // Track column types (text, number, checkbox)
         let draggedHeaderIndex = null; // Track which column header is being dragged
         let isColumnDragging = false; // Track drag activity to avoid accidental clicks
@@ -617,6 +633,9 @@
         }
 
         function displayData(data) {
+            if (editingCell && currentHeaders) {
+                commitCellEdit();
+            }
             if (!data || data.length === 0 || !currentHeaders) {
                 console.error("No data or headers to display");
                 return;
@@ -706,7 +725,7 @@
                         dataRow += `<td><input type="number" class="number-input" value="${escapeHtml(numericValue)}" step="any" inputmode="decimal" oninput="handleNumberInputChange(${row.ID}, ${headerIndex}, this)"></td>`;
                     } else {
                         const formattedValue = makeLinksClickable(cellValue);
-                        dataRow += `<td>${formattedValue}</td>`;
+                        dataRow += `<td class="text-cell" data-row-id="${row.ID}" data-header-index="${headerIndex}" onclick="startCellEdit(${row.ID}, ${headerIndex}, event)">${formattedValue}</td>`;
                     }
                 });
                 dataRow += '</tr>';
@@ -1022,6 +1041,195 @@
 
             markAsAdjusted();
             triggerAutoSave();
+        }
+
+        function isTextColumn(header) {
+            const columnType = columnTypes[header];
+            return !columnType || columnType === 'text';
+        }
+
+        function getEditableHeaderIndexes() {
+            const indexes = [];
+            currentHeaders.forEach((header, index) => {
+                if (isTextColumn(header)) {
+                    indexes.push(index);
+                }
+            });
+            return indexes;
+        }
+
+        function getTextCellElement(rowID, headerIndex) {
+            return document.querySelector(`td.text-cell[data-row-id="${rowID}"][data-header-index="${headerIndex}"]`);
+        }
+
+        function startCellEdit(rowID, headerIndex, event) {
+            if (event) {
+                const target = event.target;
+                if (target && (target.tagName === 'A' || (target.closest && target.closest('a')))) {
+                    return;
+                }
+                event.stopPropagation();
+            }
+
+            const columnName = currentHeaders[headerIndex];
+            if (!columnName || !isTextColumn(columnName)) return;
+
+            const cell = event?.currentTarget || getTextCellElement(rowID, headerIndex);
+            if (!cell) return;
+
+            startCellEditByCell(rowID, headerIndex, cell);
+        }
+
+        function startCellEditByCell(rowID, headerIndex, cell) {
+            if (editingCell && editingCell.rowID === rowID && editingCell.headerIndex === headerIndex) {
+                return;
+            }
+
+            if (editingCell) {
+                commitCellEdit();
+            }
+
+            const columnName = currentHeaders[headerIndex];
+            if (!columnName || !isTextColumn(columnName)) return;
+
+            const row = currentData.find(row => row.ID === rowID);
+            const rawValue = row && row[columnName] !== undefined && row[columnName] !== null
+                ? String(row[columnName])
+                : '';
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'text-input';
+            input.value = rawValue;
+            input.setAttribute('aria-label', `Edit ${columnName}`);
+            input.onkeydown = handleTextInputKeyDown;
+            input.onblur = () => commitCellEdit();
+
+            cell.innerHTML = '';
+            cell.appendChild(input);
+            input.focus();
+            input.select();
+
+            editingCell = {
+                rowID,
+                headerIndex,
+                cell,
+                originalValue: rawValue
+            };
+        }
+
+        function handleTextInputKeyDown(event) {
+            if (!editingCell) return;
+
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelCellEdit();
+                return;
+            }
+
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const nextTarget = getVerticalEditableCell(editingCell.rowID, editingCell.headerIndex, event.shiftKey ? -1 : 1);
+                commitCellEdit(nextTarget);
+                return;
+            }
+
+            if (event.key === 'Tab') {
+                event.preventDefault();
+                const nextTarget = getNextEditableCell(editingCell.rowID, editingCell.headerIndex, event.shiftKey ? -1 : 1);
+                commitCellEdit(nextTarget);
+            }
+        }
+
+        function getNextEditableCell(rowID, headerIndex, direction) {
+            const editableHeaderIndexes = getEditableHeaderIndexes();
+            if (editableHeaderIndexes.length === 0) return null;
+
+            const headerPosition = editableHeaderIndexes.indexOf(headerIndex);
+            if (headerPosition === -1) return null;
+
+            const rowIndex = currentData.findIndex(row => row.ID === rowID);
+            if (rowIndex === -1) return null;
+
+            let nextHeaderPosition = headerPosition + direction;
+            let nextRowIndex = rowIndex;
+
+            if (nextHeaderPosition >= editableHeaderIndexes.length) {
+                nextHeaderPosition = 0;
+                nextRowIndex += 1;
+            } else if (nextHeaderPosition < 0) {
+                nextHeaderPosition = editableHeaderIndexes.length - 1;
+                nextRowIndex -= 1;
+            }
+
+            if (nextRowIndex < 0 || nextRowIndex >= currentData.length) return null;
+
+            return {
+                rowID: currentData[nextRowIndex].ID,
+                headerIndex: editableHeaderIndexes[nextHeaderPosition]
+            };
+        }
+
+        function getVerticalEditableCell(rowID, headerIndex, direction) {
+            const rowIndex = currentData.findIndex(row => row.ID === rowID);
+            if (rowIndex === -1) return null;
+
+            const nextRowIndex = rowIndex + direction;
+            if (nextRowIndex < 0 || nextRowIndex >= currentData.length) return null;
+
+            return {
+                rowID: currentData[nextRowIndex].ID,
+                headerIndex
+            };
+        }
+
+        function updateRowValueById(rowID, columnName, newValue) {
+            const updateRowValue = (row) => {
+                if (row) {
+                    row[columnName] = newValue;
+                }
+            };
+
+            updateRowValue(currentData.find(row => row.ID === rowID));
+            updateRowValue(allData.find(row => row.ID === rowID));
+
+            if (unfilteredData.length > 0) {
+                updateRowValue(unfilteredData.find(row => row.ID === rowID));
+            }
+        }
+
+        function commitCellEdit(nextTarget = null) {
+            if (!editingCell) return;
+
+            const { rowID, headerIndex, cell, originalValue } = editingCell;
+            const columnName = currentHeaders[headerIndex];
+            const input = cell.querySelector('input.text-input');
+            const newValue = input ? input.value : originalValue;
+            editingCell = null;
+
+            if (columnName) {
+                if (newValue !== originalValue) {
+                    updateRowValueById(rowID, columnName, newValue);
+                    markAsAdjusted();
+                    triggerAutoSave();
+                }
+                cell.innerHTML = makeLinksClickable(newValue);
+            }
+
+            if (nextTarget) {
+                const nextCell = getTextCellElement(nextTarget.rowID, nextTarget.headerIndex);
+                if (nextCell) {
+                    startCellEditByCell(nextTarget.rowID, nextTarget.headerIndex, nextCell);
+                }
+            }
+        }
+
+        function cancelCellEdit() {
+            if (!editingCell) return;
+
+            const { cell, originalValue } = editingCell;
+            editingCell = null;
+            cell.innerHTML = makeLinksClickable(originalValue);
         }
 
         function handleRowClick(rowID, rowIndex, event) {
@@ -1664,6 +1872,116 @@
         }
 
         // Saved files management
+        function updateSavedFilesSearchStatus(message, isError = false) {
+            const status = document.getElementById('savedFilesSearchStatus');
+            if (!status) return;
+
+            status.textContent = message || '';
+            status.style.display = message ? 'block' : 'none';
+            status.classList.toggle('error', Boolean(isError));
+        }
+
+        function updateSavedFilesSearchControls() {
+            const clearButton = document.getElementById('savedFilesSearchClear');
+            if (!clearButton) return;
+
+            clearButton.style.display = savedFilesSearchQuery ? 'inline-flex' : 'none';
+        }
+
+        function handleSavedFilesSearch() {
+            const input = document.getElementById('savedFilesSearchInput');
+            if (!input) return;
+
+            const query = input.value.trim();
+            savedFilesSearchQuery = query;
+            updateSavedFilesSearchControls();
+
+            if (savedFilesSearchTimeout) {
+                clearTimeout(savedFilesSearchTimeout);
+            }
+
+            if (!query) {
+                savedFilesSearchResults = null;
+                savedFilesSearchToken += 1;
+                updateSavedFilesSearchStatus('');
+                renderSavedFilesTable(getSortedSavedFiles(savedFilesData));
+                return;
+            }
+
+            updateSavedFilesSearchStatus('Searching...');
+            savedFilesSearchTimeout = setTimeout(() => {
+                searchSavedFiles(query);
+            }, 300);
+        }
+
+        function clearSavedFilesSearch() {
+            const input = document.getElementById('savedFilesSearchInput');
+            if (input) {
+                input.value = '';
+            }
+
+            savedFilesSearchQuery = '';
+            savedFilesSearchResults = null;
+            savedFilesSearchToken += 1;
+
+            if (savedFilesSearchTimeout) {
+                clearTimeout(savedFilesSearchTimeout);
+            }
+
+            updateSavedFilesSearchControls();
+            updateSavedFilesSearchStatus('');
+            renderSavedFilesTable(getSortedSavedFiles(savedFilesData));
+        }
+
+        async function searchSavedFiles(query) {
+            const token = ++savedFilesSearchToken;
+            const trimmedQuery = query.trim();
+
+            if (!trimmedQuery) {
+                updateSavedFilesSearchStatus('');
+                return;
+            }
+
+            try {
+                const response = await fetch(`api/saved-files/search?query=${encodeURIComponent(trimmedQuery)}`);
+                const data = await response.json();
+
+                if (token !== savedFilesSearchToken) {
+                    return;
+                }
+
+                if (!data.success) {
+                    savedFilesSearchResults = [];
+                    updateSavedFilesSearchStatus('Search failed. Try again.', true);
+                    renderSavedFilesTable([]);
+                    return;
+                }
+
+                savedFilesSearchResults = data.files || [];
+                const count = savedFilesSearchResults.length;
+                const plural = count === 1 ? 'file' : 'files';
+                updateSavedFilesSearchStatus(`${count} ${plural} match "${trimmedQuery}"`);
+                renderSavedFilesTable(getSortedSavedFiles(savedFilesSearchResults));
+            } catch (error) {
+                console.error('Error searching saved files:', error);
+                if (token !== savedFilesSearchToken) {
+                    return;
+                }
+
+                savedFilesSearchResults = [];
+                updateSavedFilesSearchStatus('Search failed. Try again.', true);
+                renderSavedFilesTable([]);
+            }
+        }
+
+        function getActiveSavedFiles() {
+            if (savedFilesSearchQuery) {
+                return savedFilesSearchResults || [];
+            }
+
+            return savedFilesData;
+        }
+
         async function loadSavedFiles() {
             const loadingIndicator = document.getElementById('savedFilesLoading');
             const filesList = document.getElementById('savedFilesList');
@@ -1684,6 +2002,19 @@
 
                 savedFilesData = data.files || [];
 
+                if (savedFilesSearchQuery) {
+                    updateSavedFilesSearchControls();
+                    if (savedFilesData.length === 0) {
+                        savedFilesSearchResults = [];
+                        updateSavedFilesSearchStatus(`0 files match "${savedFilesSearchQuery}"`);
+                        renderSavedFilesTable([]);
+                        return;
+                    }
+
+                    await searchSavedFiles(savedFilesSearchQuery);
+                    return;
+                }
+
                 if (savedFilesData.length === 0) {
                     filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
                     return;
@@ -1701,10 +2032,15 @@
             const filesList = document.getElementById('savedFilesList');
 
             if (!files || files.length === 0) {
-                filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
+                if (savedFilesSearchQuery) {
+                    filesList.innerHTML = `<div class="empty-state">No saved files contain "${escapeHtml(savedFilesSearchQuery)}".</div>`;
+                } else {
+                    filesList.innerHTML = '<div class="empty-state">No saved files yet. Upload and save a CSV to get started.</div>';
+                }
                 return;
             }
 
+            const showMatchColumn = Boolean(savedFilesSearchQuery);
             const sortIndicator = (column) => {
                 const isActive = savedFilesSort.column === column;
                 const arrow = savedFilesSort.ascending ? '&#9650;' : '&#9660;';
@@ -1719,6 +2055,7 @@
                             <th class="sortable" onclick="sortSavedFiles('filename')">Filename ${sortIndicator('filename')}</th>
                             <th class="sortable" onclick="sortSavedFiles('size')">Size ${sortIndicator('size')}</th>
                             <th class="sortable" onclick="sortSavedFiles('lastModified')">Last Modified ${sortIndicator('lastModified')}</th>
+                            ${showMatchColumn ? '<th>Matches</th>' : ''}
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -1728,6 +2065,7 @@
             files.forEach(file => {
                 const size = formatFileSize(file.size);
                 const date = formatDate(file.lastModified);
+                const matchCount = typeof file.matchCount === 'number' ? file.matchCount.toLocaleString() : '—';
                 tableHTML += `
                     <tr>
                         <td class="filename-cell">
@@ -1737,6 +2075,7 @@
                         </td>
                         <td>${size}</td>
                         <td>${date}</td>
+                        ${showMatchColumn ? `<td class="saved-files-match-count">${matchCount}</td>` : ''}
                         <td>
                             <div class="file-actions">
                                 <button class="file-action-btn" onclick="loadSavedFile('${file.filename}')">Load</button>
@@ -1752,8 +2091,8 @@
             filesList.innerHTML = tableHTML;
         }
 
-        function getSortedSavedFiles() {
-            const files = [...savedFilesData];
+        function getSortedSavedFiles(filesToSort = savedFilesData) {
+            const files = [...filesToSort];
             const { column, ascending } = savedFilesSort;
 
             files.sort((a, b) => {
@@ -1774,7 +2113,8 @@
         }
 
         function sortSavedFiles(column) {
-            if (!savedFilesData || savedFilesData.length === 0) {
+            const files = getActiveSavedFiles();
+            if (!files || files.length === 0) {
                 return;
             }
 
@@ -1787,7 +2127,7 @@
                 };
             }
 
-            renderSavedFilesTable(getSortedSavedFiles());
+            renderSavedFilesTable(getSortedSavedFiles(files));
         }
 
         async function loadSavedFile(filename) {
@@ -2294,10 +2634,11 @@
             overlay.className = 'export-dialog-overlay';
             overlay.id = 'headerDialogOverlay';
 
-            const firstRow = rawFileData[0];
+            const firstRow = rawFileData[0] || [];
             const secondRow = rawFileData.length > 1 ? rawFileData[1] : null;
             const firstRowValues = firstRow.join(', ');
             const secondRowValues = secondRow ? secondRow.join(', ') : '';
+            const keepFirstRowChecked = !hasCustomHeaders;
 
             const dialog = document.createElement('div');
             dialog.className = 'export-dialog';
@@ -2317,6 +2658,10 @@
                     <label style="display: block; cursor: pointer;">
                         <input type="radio" name="headerType" value="custom" ${!secondRow ? 'checked' : ''} style="margin-right: 5px;">
                         Enter custom headers
+                    </label>
+                    <label style="display: block; margin-left: 20px; font-size: 11px; color: #666; cursor: pointer;">
+                        <input type="checkbox" id="keepFirstRowAsData" ${keepFirstRowChecked ? 'checked' : ''} style="margin-right: 5px;">
+                        Keep existing first row as data (insert headers above)
                     </label>
                 </div>
                 <div class="export-dialog-buttons">
@@ -2345,7 +2690,15 @@
         }
 
         function applyHeaders() {
-            const headerType = document.querySelector('input[name="headerType"]:checked').value;
+            const headerTypeInput = document.querySelector('input[name="headerType"]:checked');
+            if (!headerTypeInput) {
+                closeHeaderDialog();
+                return;
+            }
+
+            const headerType = headerTypeInput.value;
+            const keepFirstRowAsData = headerType === 'custom'
+                && document.getElementById('keepFirstRowAsData')?.checked;
 
             closeHeaderDialog();
 
@@ -2364,12 +2717,19 @@
                     if (newHeaders.length === numberOfColumns) {
                         // Convert current data objects back to arrays using old headers order
                         const oldHeaders = [...currentHeaders]; // Save old headers
-                        currentHeaders = newHeaders;
-
-                        // Convert data from objects to arrays based on old headers
-                        currentData = currentData.map(row => {
+                        const dataRows = currentData.map(row => {
+                            if (Array.isArray(row)) {
+                                return row;
+                            }
                             return oldHeaders.map(header => row[header]);
                         });
+
+                        if (keepFirstRowAsData) {
+                            dataRows.unshift(oldHeaders);
+                        }
+
+                        currentHeaders = newHeaders;
+                        currentData = dataRows;
                     } else {
                         alert(`Please provide exactly ${numberOfColumns} headers. You provided ${newHeaders.length}.`);
                         return;

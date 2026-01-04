@@ -68,6 +68,21 @@ function sanitizeFilename(filename) {
   return filename.replace(/[^a-zA-Z0-9.-_]/g, '_');
 }
 
+function countQueryMatches(content, query) {
+  if (!content || !query) return 0;
+  let count = 0;
+  let index = 0;
+  const limit = 1000;
+
+  while ((index = content.indexOf(query, index)) !== -1) {
+    count += 1;
+    if (count >= limit) break;
+    index += query.length || 1;
+  }
+
+  return count;
+}
+
 // Helper function to sync metadata with actual files on disk
 async function syncMetadataWithFiles() {
   try {
@@ -125,6 +140,53 @@ app.get('/api/saved-files', async (req, res) => {
   } catch (error) {
     console.error('Error listing files:', error);
     res.status(500).json({ success: false, error: 'Failed to list files' });
+  }
+});
+
+// GET /api/saved-files/search - Search saved CSV files by content
+app.get('/api/saved-files/search', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Search query is required' });
+    }
+
+    const metadata = await readMetadata();
+    const normalizedQuery = query.toLowerCase();
+    const results = [];
+
+    for (const [filename, info] of Object.entries(metadata)) {
+      if (filename === 'metadata.json') continue;
+      const filePath = path.join(SAVED_CSV_DIR, filename);
+
+      try {
+        await fs.access(filePath);
+      } catch {
+        continue;
+      }
+
+      let content = '';
+      try {
+        content = await fs.readFile(filePath, 'utf8');
+      } catch (error) {
+        console.warn(`Unable to read file for search: ${filename}`, error);
+        continue;
+      }
+
+      const matchCount = countQueryMatches(content.toLowerCase(), normalizedQuery);
+      if (matchCount > 0) {
+        results.push({
+          filename: filename,
+          matchCount: matchCount,
+          ...info
+        });
+      }
+    }
+
+    res.json({ success: true, files: results });
+  } catch (error) {
+    console.error('Error searching files:', error);
+    res.status(500).json({ success: false, error: 'Failed to search files' });
   }
 });
 

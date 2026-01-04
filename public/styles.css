@@ -167,6 +167,10 @@ strong, b {
     border-bottom: 1px solid #ddd;
 }
 
+.text-cell {
+    cursor: text;
+}
+
 .number-input {
     width: 100%;
     box-sizing: border-box;
@@ -178,7 +182,24 @@ strong, b {
     background: #fff;
 }
 
+.text-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: 'Source Code Pro', monospace;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #fff;
+}
+
 .number-input:focus {
+    border-color: #999;
+    outline: none;
+    background: #f9f9f9;
+}
+
+.text-input:focus {
     border-color: #999;
     outline: none;
     background: #f9f9f9;
@@ -560,6 +581,68 @@ th.column-drop-target {
     padding: 10px;
 }
 
+.saved-files-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 10px;
+}
+
+.saved-files-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 220px;
+}
+
+.saved-files-search-input {
+    padding: 4px 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: 'Source Code Pro', sans-serif;
+    background: #fff;
+    color: #333;
+    width: 230px;
+}
+
+.saved-files-search-input:focus {
+    border-color: #999;
+    outline: none;
+    background: #f9f9f9;
+}
+
+.saved-files-search-input::placeholder {
+    color: #999;
+}
+
+.saved-files-clear-btn {
+    padding: 3px 8px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #f5f5f5;
+    color: #333;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+}
+
+.saved-files-clear-btn:hover {
+    background: #e0e0e0;
+}
+
+.saved-files-search-status {
+    font-size: 11px;
+    color: #666;
+    font-family: 'Source Code Pro', sans-serif;
+}
+
+.saved-files-search-status.error {
+    color: #b00020;
+}
+
 .saved-files-table {
     width: 100%;
     border-collapse: collapse;
@@ -613,6 +696,11 @@ th.column-drop-target {
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.saved-files-match-count {
+    font-family: 'Source Code Pro', sans-serif;
+    color: #444;
 }
 
 .filename-input {
